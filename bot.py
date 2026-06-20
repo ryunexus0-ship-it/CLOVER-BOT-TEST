@@ -599,7 +599,7 @@ class ComandosView(discord.ui.View):
                 "**+daradmin / +quitaradmin**\n└ Asigna o revoca permisos de admin bot.\n\n"
                 "**+daryuno / +quitaryuno**\n└ Asigna o revoca rango Co-Owner.\n\n"
                 "**+viento_divino [msg]**\n└ Comunicado global con @everyone.\n\n"
-                "**+dar_mítico [@usuario]**\n└ Menú interactivo para dar raza/magia/grimorio/demonio sin spins.\n\n"
+                "**+darmitico [@usuario]**\n└ Menú interactivo para dar raza/magia/grimorio/demonio sin spins.\n\n"
                 "**+impuesto_real [cantidad]**\n└ Cobra yenes a todos los jugadores.\n\n"
                 "**+banco_infinito**\n└ Recursos ilimitados para el owner.\n\n"
                 "**+wipe [@usuario]**\n└ Borra todos los datos de un jugador.\n\n"
@@ -831,12 +831,12 @@ async def viento_divino(ctx, *, mensaje: str):
     embed = discord.Embed(title="🌪️ ¡Decreto del Co-Owner Yuno! 🌪️", description=mensaje, color=discord.Color.green())
     await ctx.send(content="@everyone", embed=embed)
 
-@bot.command(name="dar_mítico")
+@bot.command(name="darmitico", aliases=["dar_mitico", "darpoder"])
 @es_owner_o_coowner()
 async def dar_mitico(ctx, miembro: discord.Member = None):
     """Menú interactivo para asignar raza/magia/grimorio/demonio a un usuario."""
     if not miembro:
-        return await ctx.send("❌ Uso: `+dar_mítico [@usuario]`")
+        return await ctx.send("❌ Uso: `+darmitico [@usuario]`")
 
     class TipoSelect(discord.ui.Select):
         def __init__(self):
