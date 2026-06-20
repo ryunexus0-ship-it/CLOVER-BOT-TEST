@@ -1558,3 +1558,14 @@ async def inforaza(ctx, *, nombre_raza: str = None):
         embed.set_image(url=raza["gif"])
     await ctx.send(embed=embed)
 
+
+
+# =========================================================================
+# 🚀 ARRANQUE DEL BOT
+# =========================================================================
+
+from skills import setup_skills
+setup_skills(bot, cargar_datos, guardar_datos, verificar_usuario, es_admin_bot)
+
+TOKEN = os.environ.get("TOKEN")
+bot.run(TOKEN)
