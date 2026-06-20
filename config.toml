@@ -1,0 +1,5 @@
+ID = "Black Clover Bot"
+MAIN = "main.py"
+TYPE = "bot"
+RAM = 100
+VERSION = "latest"

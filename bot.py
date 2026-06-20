@@ -1,0 +1,1205 @@
+import discord
+from discord.ext import commands
+import random
+import json
+import os
+import asyncio
+import psycopg2
+from psycopg2.extras import Json
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True  
+
+bot = commands.Bot(command_prefix="+", intents=intents)
+
+# =========================================================================
+# 🗄️ CONFIGURACIÓN DE BASE DE DATOS (PostgreSQL - Railway)
+# Agrega DATABASE_URL en las variables de entorno de Railway.
+# =========================================================================
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+def init_db():
+    """Crea la tabla si no existe y migra datos del JSON local si los hay."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS bot_data (
+                    id TEXT PRIMARY KEY,
+                    value JSONB NOT NULL
+                )
+            """)
+        conn.commit()
+
+    # Migración automática desde el JSON local (solo se ejecuta una vez)
+    json_path = "usuarios_rp.json"
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+            datos_actuales = cargar_datos()
+            # Solo migra si la DB está vacía
+            if not datos_actuales or datos_actuales == _defaults():
+                guardar_datos(datos)
+                os.rename(json_path, json_path + ".migrado")
+                print("✅ Datos migrados desde usuarios_rp.json a PostgreSQL.")
+        except Exception as e:
+            print(f"⚠️ No se pudo migrar el JSON: {e}")
+
+# =========================================================================
+# 🔮 CONFIGURACIÓN DE SPINS - DIFICULTAD BALANCEADA (MÁS ACCESIBLE)
+# =========================================================================
+
+RAZAS = {
+    "Humano": {"rareza": "🟢 Común", "peso": 0.55, "desc": "La raza predominante en el Reino de Clover. Poseen gran adaptabilidad.", "gif": "https://media.tenor.com/7gNl6lH1x30AAAAC/black-clover-asta.gif"},
+    "Medio-Elfo": {"rareza": "🔵 Raro", "peso": 0.20, "desc": "Sangre híbrida que combina el ingenio humano con el maná elfo.", "gif": "https://media.tenor.com/k6lP0q9BvzoAAAAC/yuno-black-clover.gif"},
+    "Enano": {"rareza": "🔵 Raro", "peso": 0.14, "desc": "Raza subterránea experta en la creación física y la magia de tierra/minerales.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Elfo": {"rareza": "🟡 Legendario", "peso": 0.07, "desc": "Criaturas ancestrales bendecidas por el maná con inmensas reservas mágicas.", "gif": "https://media.tenor.com/k6lP0q9BvzoAAAAC/yuno-black-clover.gif"},
+    "Demonio": {"rareza": "🔴 Mítico", "peso": 0.02, "desc": "Seres del inframundo portadores de magia negativa y poder maldito devastador.", "gif": "https://media.tenor.com/T_7U9kX8t-AAAAAC/black-clover-licht.gif"},
+    "Espíritu": {"rareza": "🔴 Mítico", "peso": 0.015, "desc": "Entidades divinas elementales que eligen a magos excepcionales.", "gif": "https://media.tenor.com/NOnw3uT07U8AAAAC/sylph-black-clover.gif"},
+    "Humano del Inframundo": {"rareza": "⚫ Prohibido", "peso": 0.004, "desc": "Humanos alterados por contratos demoníacos oscuros.", "gif": "https://media.tenor.com/Z4_ZlI-8hJMAAAAd/zenon-zogratis-zenon.gif"},
+    "Híbrido Oscuro": {"rareza": "⚫ Prohibido", "peso": 0.001, "desc": "La unión prohibida de dos fuerzas incompatibles en un solo ser.", "gif": "https://media.tenor.com/Z4_ZlI-8hJMAAAAd/zenon-zogratis-zenon.gif"}
+}
+
+GRIMORIOS = {
+    "Grimorio de 3 Hojas": {"rareza": "🟢 Común", "peso": 0.60, "desc": "Símbolo de integridad, esperanza y amor. El estándar de los Caballeros Mágicos.", "gif": "https://media.tenor.com/wP0Cg70L4QYAAAAC/noelle-grimoire.gif"},
+    "Grimorio de las Palas": {"rareza": "🔵 Raro", "peso": 0.11, "desc": "Procedente del helado Reino de la Pala, ideal para magias oscuras.", "gif": "https://media.tenor.com/b28S75W9e3IAAAAC/black-clover-grimoire.gif"},
+    "Grimorio de los Diamantes": {"rareza": "🔵 Raro", "peso": 0.11, "desc": "Procedente del Reino del Diamante, enfocado en magias de alta densidad.", "gif": "https://media.tenor.com/4B68jCunm7UAAAAC/black-clover-grimoires.gif"},
+    "Grimorio de los Corazones": {"rareza": "🔵 Raro", "peso": 0.10, "desc": "Procedente del Reino del Corazón, con técnicas mágicas naturales y fluidas.", "gif": "https://media.tenor.com/wP0Cg70L4QYAAAAC/noelle-grimoire.gif"},
+    "Grimorio de 4 Hojas": {"rareza": "🟡 Legendario", "peso": 0.05, "desc": "En la cuarta hoja reside la buena fortuna. Bendecido por el maná.", "gif": "https://media.tenor.com/qU_M729lVBgAAAAC/yuno-grimoire.gif"},
+    "Grimorio de 5 Hojas": {"rareza": "🔴 Mítico", "peso": 0.02, "desc": "En las primeras tres reside la fe, la esperanza y el amor. En la cuarta la fortuna... y en la quinta el Demonio.", "gif": "https://media.tenor.com/asta-demon.gif"},
+    "Sin Grimorio": {"rareza": "⚫ Especial", "peso": 0.01, "desc": "No posees libro físico, tu magia se manifiesta de maneras exóticas o nulas.", "gif": "https://media.tenor.com/b7201wR38vAAAAAC/asta-demon.gif"}
+}
+
+MAGIAS = {
+    "Fuego": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Alta potencia destructiva que consume todo a su paso.", "gif": "https://media.tenor.com/A6m2wH_4N00AAAAC/mereoleona-vermillion-black-clover.gif"},
+    "Agua": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Gran versatilidad fluida, capaz de sanar o atacar ferozmente.", "gif": "https://media.tenor.com/wP0Cg70L4QYAAAAC/noelle-grimoire.gif"},
+    "Viento": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Ráfagas veloces, tornados cortantes y movilidad mágica superior.", "gif": "https://media.tenor.com/N7bVndmU4jIAAAAC/yuno-grimoire.gif"},
+    "Tierra": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Resistencia absoluta, creación de muros y control del terreno.", "gif": "https://media.tenor.com/6Cg6y7_b-6MAAAAC/black-clover-sol.gif"},
+    "Hielo": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Control de masas, congelamiento y generación de defensas de escarcha.", "gif": "https://media.tenor.com/R_W9ZclE05cAAAAC/black-clover-ice.gif"},
+    "Planta": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Creación de vegetación, raíces restrictivas y amarres tácticos.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Barro": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Terreno pantanoso que drena la agilidad y atrapa a los oponentes.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Humo": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Estrategias de evasión y asfixia nublando la vista del campo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Roca": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Proyectiles contundentes y corazas pesadas de piedra mineral.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Cadena": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Cadenas de hierro mágico perfectas para restringir y amarrar magos.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Dados": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Tus hechizos ganan potencia según la suerte del tiro numérico obtenido.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Curación": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Recuperación constante de heridas y vitalidad en el campo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Ceniza": {"rareza": "🟢 Común", "peso": 0.04, "desc": "Hechizos trampa retardados hechos de pólvora y residuos calcinados.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Rayo": {"rareza": "🔵 Raro", "peso": 0.02, "desc": "Velocidad eléctrica inigualable y ataques perforantes de alto impacto.", "gif": "https://media.tenor.com/T_7U9kX8t-AAAAAC/black-clover-licht.gif"},
+    "Arena": {"rareza": "🔵 Raro", "peso": 0.02, "desc": "Invocación de tormentas de arena compacta y golems pesados.", "gif": "https://media.tenor.com/6Cg6y7_b-6MAAAAC/black-clover-sol.gif"},
+    "Oscuridad": {"rareza": "🔵 Raro", "peso": 0.02, "desc": "Atrae y absorbe hechizos enemigos distorsionando el espacio.", "gif": "https://media.tenor.com/vH_w96K7QAAAAC/yami-black-clover.gif"},
+    "Hilos": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Manipulación de hilos invisibles para controlar cuerpos o tejer defensas.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Permutación": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Intercambia propiedades físicas de los objetos o magias lanzadas.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Combinación": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Permite enlazar hechizos propios con los de tus aliados eficazmente.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Algodón": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Creación de almohadillas mágicas que amortiguan impactos y atrapan.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Alimentos": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Cocina mágica capaz de restaurar las reservas de maná de un equipo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Escamas": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Armadura de escamas que altera el peso de la magia enemiga.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Canto": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Ondas sonoras mágicas que potencian aliados o confunden rivales.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Sello": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Habilidad experta para bloquear portales, heridas o hechizos rivales.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Brújula": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Redirecciona y desvía cualquier hechizo de proyectil que te lancen.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Sangre": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Manipulación de fluidos biológicos y control corporal bajo maldición.", "gif": "https://media.tenor.com/gK96GZas9ksAAAAC/witch-queen-black-clover.gif"},
+    "Maldición": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Hechizos de desgaste continuo que impiden la sanación del objetivo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Veneno": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Nubes tóxicas ácidas que merman los atributos físicos gradualmente.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Sombra": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Viaja a través de la oscuridad de las sombras y restringe movimientos.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Modificación": {"rareza": "🔵 Raro", "peso": 0.015, "desc": "Altera las propiedades mágicas elementales de los ataques en combate.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Cristal": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Genera estructuras de gemas de alta densidad sumamente duras.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Espejos": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Refleja ataques enemigos duplicando o clonando su trayectoria.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Árbol Mitológico": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Invoca raíces gigantescas del árbol del mundo para sanación masiva.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Sueños": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Atrapa mentes enemigas dentro de una dimensión donde controlas las reglas.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Huesos": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Creación y endurecimiento de osamentas afiladas para defensa y ataque.", "gif": "https://media.tenor.com/Z4_ZlI-8hJMAAAAd/zenon-zogratis-zenon.gif"},
+    "Carne": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Regeneración instantánea y alteración de la masa muscular física.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Imitación": {"rareza": "🟣 Épico", "peso": 0.01, "desc": "Copia a la perfección hechizos enemigos tras tocarlos directamente.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Luz": {"rareza": "🟡 Legendario", "peso": 0.006, "desc": "Velocidad divina destellante y espadas de fotones purificadoras.", "gif": "https://media.tenor.com/wP0Cg70L4QYAAAAC/noelle-grimoire.gif"},
+    "Espacio": {"rareza": "🟡 Legendario", "peso": 0.006, "desc": "Apertura de portales interdimensionales y desgarradura espacial.", "gif": "https://media.tenor.com/GzB9Gj9yA-4AAAAC/langris-black-clover.gif"},
+    "Pintura": {"rareza": "🟡 Legendario", "peso": 0.006, "desc": "Versatilidad artística capaz de recrear cualquier elemento con maná.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Gravedad": {"rareza": "🔴 Mítico", "peso": 0.002, "desc": "Manipulación del peso gravitatorio; aplasta ejércitos y dobla espacio.", "gif": "https://media.tenor.com/Z4_ZlI-8hJMAAAAd/zenon-zogratis-zenon.gif"},
+    "Almas": {"rareza": "🔴 Mítico", "peso": 0.002, "desc": "Toca y altera los conceptos o la memoria espiritual de un objetivo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Causalidad": {"rareza": "🔴 Mítico", "peso": 0.001, "desc": "Rompe la causa y efecto. Regresa el daño recibido directo a su origen.", "gif": "https://i.imgur.com/vH_w9Wz.gif"}
+}
+
+DEMONIOS = {
+    "Enjambre Menor Rojo": {"rareza": "🟢 Rango Bajo", "peso": 0.30, "desc": "Un demonio menor común que imbuye fuego infernal básico en tus ataques.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Enjambre Menor Alado": {"rareza": "🟢 Rango Bajo", "peso": 0.30, "desc": "Demonio inferior que concede vuelo rústico y ráfagas de viento corrupto.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Abominación Básica": {"rareza": "🟢 Rango Bajo", "peso": 0.20, "desc": "Miasma oscuro de bajo nivel que drena lentamente la estamina de los rivales.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Gimodelo": {"rareza": "🔵 Rango Medio", "peso": 0.03, "desc": "Contrato de Nacht. Otorga la Unión de Sombra con características físicas y fuerza de Toro.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Slotos": {"rareza": "🔵 Rango Medio", "peso": 0.03, "desc": "Contrato de Nacht. Otorga la Unión de Sombra con la resistencia masiva del Caballo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Plumede": {"rareza": "🔵 Rango Medio", "peso": 0.03, "desc": "Contrato de Nacht. Otorga agilidad felina suprema y sigilo absoluto entre las sombras.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Walgner": {"rareza": "🔵 Rango Medio", "peso": 0.03, "desc": "Contrato de Nacht. Capaz de emitir chirridos ultrasónicos que aturden y confunden rivales.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Zagred": {"rareza": "🔴 Alto Rango", "peso": 0.01, "desc": "El demonio de la palabra (Kotodama). Todo lo que pronuncia se materializa en el campo.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Lucifugus": {"rareza": "🔴 Alto Rango", "peso": 0.01, "desc": "Portador de un aura de destrucción absoluta que aniquila la vida a su alrededor.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Liebe": {"rareza": "⭐ Especial", "peso": 0.01, "desc": "El demonio de la Anti-Magia. Cancela, anula y rebota cualquier tipo de manifestación mágica.", "gif": "https://media.tenor.com/b7201wR38vAAAAAC/asta-demon.gif"},
+    "Megicula": {"rareza": "👑 Supremo", "peso": 0.004, "desc": "La deidad de las maldiciones de sangre y acero. Desgasta y bloquea curaciones enemigas.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Adrammelech": {"rareza": "👑 Supremo", "peso": 0.004, "desc": "Un demonio de alto rango sumamente analítico dotado de una velocidad y evasión absurda.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Lilith": {"rareza": "👑 Supremo", "peso": 0.003, "desc": "Demonio gemelo del hielo supremo. Capaz de congelar incluso conceptos intangibles.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Naamah": {"rareza": "👑 Supremo", "peso": 0.003, "desc": "Demonio gemelo del fuego supremo. Sus llamas calcinan la magia y reducen todo a cenizas.", "gif": "https://i.imgur.com/vH_w9Wz.gif"},
+    "Lucifero": {"rareza": "👑 Supremo", "peso": 0.001, "desc": "El Rey del Inframundo. Su magia de Gravedad aplasta ejércitos enteros sin esfuerzo.", "gif": "https://media.tenor.com/Z4_ZlI-8hJMAAAAd/zenon-zogratis-zenon.gif"},
+    "Beelzebub": {"rareza": "👑 Supremo", "peso": 0.0005, "desc": "Señor de los cubos espaciales. Capaz de desgarrar y controlar las dimensiones del mapa.", "gif": "https://media.tenor.com/Z4_ZlI-8hJMAAAAd/zenon-zogratis-zenon.gif"},
+    "Astaroth": {"rareza": "👑 Supremo", "peso": 0.0005, "desc": "Demonio del Tiempo. Su presencia congela o acelera el envejecimiento de los hechizos.", "gif": "https://media.tenor.com/b7201wR38vAAAAAC/asta-demon.gif"}
+}
+
+TIENDA_ITEMS_BASE = {
+    "capa": {"nombre": "Capa de Escuadrón", "precio": 1500, "desc": "Otorga +5% de defensa general en rol.", "es_arma": False},
+    "pocion": {"nombre": "Poción de Maná", "precio": 500, "desc": "Recupera energía mágica instantáneamente.", "es_arma": False},
+    "anillo": {"nombre": "Anillo de Maná", "precio": 4000, "desc": "Estabiliza hechizos haciéndolos más precisos.", "es_arma": False},
+    "espada_antigua": {"nombre": "Espada de Acero Antiguo", "precio": 3500, "desc": "Arma equipable lista para encantar con estadísticas.", "es_arma": True}
+}
+
+LISTA_RANGOS = [
+    "Mago normal", "Mago", "Caballero Mágico junior", "Caballero Mágico Intermedio",
+    "Caballero Mágico Superior", "Caballero Mágico maximo", "Rey mago"
+]
+
+def calcular_rango(puntos: int) -> str:
+    indice = puntos // 1000
+    if indice >= len(LISTA_RANGOS): return LISTA_RANGOS[-1]
+    return LISTA_RANGOS[indice]
+
+def _defaults():
+    return {
+        "ordenes": {}, "admins": [], "co_owners": [], "canal_logs": None,
+        "comandos_creados": {}, "tienda_personalizada": {}, "tablero_misiones": []
+    }
+
+def cargar_datos():
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM bot_data WHERE id = 'global'")
+                row = cur.fetchone()
+                if row:
+                    datos = row[0]
+                    datos.setdefault("ordenes", {})
+                    datos.setdefault("admins", [])
+                    datos.setdefault("co_owners", [])
+                    datos.setdefault("canal_logs", None)
+                    datos.setdefault("comandos_creados", {})
+                    datos.setdefault("tienda_personalizada", {})
+                    datos.setdefault("tablero_misiones", [])
+                    return datos
+    except Exception as e:
+        print(f"❌ Error al cargar datos: {e}")
+    return _defaults()
+
+def guardar_datos(datos):
+    datos.setdefault("ordenes", {})
+    datos.setdefault("admins", [])
+    datos.setdefault("co_owners", [])
+    datos.setdefault("canal_logs", None)
+    datos.setdefault("comandos_creados", {})
+    datos.setdefault("tienda_personalizada", {})
+    datos.setdefault("tablero_misiones", [])
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO bot_data (id, value)
+                    VALUES ('global', %s)
+                    ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value
+                """, (Json(datos),))
+            conn.commit()
+    except Exception as e:
+        print(f"❌ Error al guardar datos: {e}")
+
+def plantilla_personaje():
+    return {
+        "nombre_rp": "Sin registrar",
+        "raza": "Ninguna", "magia": "Ninguna", "grimorio": "Ninguno", "demonio": "Ninguno",
+        "rango": "Mago normal", "puntos": 0, "misiones_hechas": [],
+        "dinero": 1000, "inventario": [],
+        "puntos_stats": 20, "fuerza": 0, "vida": 0, "agilidad": 0, "suerte": 0,
+        "armas_equipadas": {}, "personaje_exclusivo": "Ninguno"
+    }
+
+def verificar_usuario(user_id, datos):
+    uid = str(user_id)
+    if uid not in datos:
+        datos[uid] = {
+            "slot_activo": "1", "rerolls": 5,
+            "spins_realizados": {"raza": False, "magia": False, "grimorio": False, "demonio": False},
+            "slots": {"1": plantilla_personaje(), "2": plantilla_personaje(), "3": plantilla_personaje()}
+        }
+    user = datos[uid]
+    user.setdefault("spins_realizados", {"raza": False, "magia": False, "grimorio": False, "demonio": False})
+    user["spins_realizados"].setdefault("demonio", False)
+        
+    for s in ["1", "2", "3"]:
+        if s not in user["slots"]: user["slots"][s] = plantilla_personaje()
+        pj = user["slots"][s]
+        pj.setdefault("demonio", "Ninguno")
+        pj.setdefault("nombre_rp", "Sin registrar")
+        pj.setdefault("dinero", 1000)
+        pj.setdefault("inventario", [])
+        pj.setdefault("puntos", 0)
+        pj.setdefault("misiones_hechas", [])
+        pj.setdefault("puntos_stats", 20)
+        pj.setdefault("fuerza", 0)
+        pj.setdefault("vida", 0)
+        pj.setdefault("agilidad", 0)
+        pj.setdefault("suerte", 0)
+        pj.setdefault("armas_equipadas", {})
+        pj.setdefault("personaje_exclusivo", "Ninguno")
+        if pj.get("rango") not in LISTA_RANGOS: pj["rango"] = "Mago normal"
+
+def es_admin_bot(ctx):
+    datos = cargar_datos()
+    return ctx.author.guild_permissions.administrator or ctx.author.id in datos.get("admins", []) or ctx.author.id == bot.owner_id or ctx.author.id in datos.get("co_owners", [])
+
+def es_owner_o_coowner():
+    async def predicate(ctx):
+        datos = cargar_datos()
+        es_co_owner = ctx.author.id in datos.get("co_owners", [])
+        es_owner_real = ctx.author.id == bot.owner_id
+        if es_owner_real or es_co_owner: return True
+        raise commands.NotOwner("No tienes rango de Creador o Co-Owner.")
+    return commands.check(predicate)
+
+def obtener_demonios_ocupados(datos_totales):
+    ocupados = set()
+    for uid, info in datos_totales.items():
+        if uid in ["ordenes", "admins", "co_owners", "canal_logs", "comandos_creados", "tienda_personalizada", "tablero_misiones"]: continue
+        slots = info.get("slots", {})
+        for s_id, pj in slots.items():
+            dem = pj.get("demonio", "Ninguno")
+            if dem and dem != "Ninguno":
+                ocupados.add(dem)
+    return ocupados
+
+async def asignar_rol_automatico(ctx, tipo: str, nombre_objeto: str):
+    try:
+        lista_remover = []
+        if tipo == "raza":
+            lista_remover = [r.lower() for r in RAZAS.keys()]
+        elif tipo == "magia":
+            lista_remover = [m.lower() for m in MAGIAS.keys()]
+        elif tipo == "grimorio":
+            lista_remover = [g.lower() for g in GRIMORIOS.keys()]
+        elif tipo == "demonio":
+            lista_remover = [d.lower() for d in DEMONIOS.keys()]
+
+        roles_a_remover = []
+        for role in ctx.author.roles:
+            for item in lista_remover:
+                if item in role.name.lower() and nombre_objeto.lower() not in role.name.lower():
+                    roles_a_remover.append(role)
+                    break
+        if roles_a_remover:
+            await ctx.author.remove_roles(*roles_a_remover)
+
+        for role in ctx.guild.roles:
+            if nombre_objeto.lower() in role.name.lower():
+                await ctx.author.add_roles(role)
+                break
+    except:
+        pass
+
+# =========================================================
+# MODULO DE LOGICA DE SPINS
+# =========================================================
+async def ejecutar_spin_logica(ctx, tipo: str, es_reroll: bool):
+    type_clean = tipo.lower().strip()
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    user = datos[str(ctx.author.id)]
+    slot = user["slot_activo"]
+    pj = user["slots"][slot]
+
+    if type_clean == "demonio":
+        if pj.get("grimorio") != "Grimorio de 5 Hojas":
+            return await ctx.send(f"❌ {ctx.author.mention}, ¡tu grimorio actual es `{pj.get('grimorio')}`! Necesitas poseer el **Grimorio de 5 Hojas**.")
+
+    if not es_reroll and user["spins_realizados"].get(type_clean, False):
+        return await ctx.send(f"⚠️ Usa `+rr {type_clean}` para cambiar tu {type_clean}.")
+    if es_reroll:
+        if user["rerolls"] <= 0: return await ctx.send("❌ Sin Rerolls globales disponibles.")
+        user["rerolls"] -= 1
+
+    if type_clean == "raza": pool = RAZAS
+    elif type_clean == "magia": pool = MAGIAS
+    elif type_clean == "grimorio": pool = GRIMORIOS
+    else: pool = DEMONIOS
+
+    nombres = list(pool.keys())
+    pesos = [pool[n]["peso"] for n in nombres]
+    elegido = "Ninguno"
+    
+    if type_clean == "demonio":
+        demonios_ocupados = obtener_demonios_ocupados(datos)
+        intentos = 0
+        while intentos < 100:
+            intentos += 1
+            candidato = random.choices(nombres, weights=pesos, k=1)[0]
+            if pool[candidato]["rareza"] == "🟢 Rango Bajo":
+                elegido = candidato
+                break
+            if candidato not in demonios_ocupados:
+                elegido = candidato
+                break
+        if elegido == "Ninguno": elegido = "Abominación Básica"
+    else:
+        elegido = random.choices(nombres, weights=pesos, k=1)[0]
+    
+    pj[type_clean] = elegido
+    user["spins_realizados"][type_clean] = True
+    guardar_datos(datos)
+
+    await asignar_rol_automatico(ctx, type_clean, elegido)
+
+    embed = discord.Embed(title=f"✨ ¡Giro de {type_clean.upper()}! ✨", color=discord.Color.from_rgb(47, 49, 54), description=f"*{pool[elegido]['desc']}*")
+    embed.add_field(name="🔮 Obtenido:", value=f"**{elegido}**").add_field(name="⭐ Rareza:", value=f"`{pool[elegido]['rareza']}`")
+    embed.set_image(url=pool[elegido]["gif"])
+    await ctx.send(content=ctx.author.mention, embed=embed)
+
+@bot.command()
+@commands.cooldown(1, 5, commands.BucketType.user)
+async def spin(ctx, tipo: str = None):
+    if not tipo or tipo.lower() not in ["raza", "magia", "grimorio", "demonio"]: 
+        return await ctx.send("❌ Uso: `+spin raza/magia/grimorio/demonio`")
+    await ejecutar_spin_logica(ctx, tipo, False)
+
+@bot.command()
+@commands.cooldown(1, 5, commands.BucketType.user)
+async def rr(ctx, tipo: str = None):
+    if not tipo or tipo.lower() not in ["raza", "magia", "grimorio", "demonio"]: 
+        return await ctx.send("❌ Uso: `+rr raza/magia/grimorio/demonio`")
+    await ejecutar_spin_logica(ctx, tipo, True)
+
+# =========================================================
+# NUEVOS COMANDOS: ENTRENAMIENTO Y ASCENDER
+# =========================================================
+
+@bot.command(name="entrenamiento", aliases=["entrenar"])
+@commands.cooldown(1, 30, commands.BucketType.user)
+async def entrenamiento(ctx):
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    slot = datos[str(ctx.author.id)]["slot_activo"]
+    pj = datos[str(ctx.author.id)]["slots"][slot]
+    
+    stats_ganados = random.randint(5, 15)
+    pj["puntos_stats"] += stats_ganados
+    guardar_datos(datos)
+    
+    embed = discord.Embed(
+        title="⚔️ ¡Sesión de Entrenamiento Finalizada! ⚔️",
+        description=f"{ctx.author.mention}, has completado tus ejercicios físicos y de control de maná en el **Slot {slot}**.",
+        color=discord.Color.from_rgb(255, 127, 0)
+    )
+    embed.add_field(name="✨ Puntos de Stats Obtenidos:", value=f"`+{stats_ganados} Puntos Libres`", inline=True)
+    embed.set_footer(text="Usa +addstat [fuerza/vida/agilidad/suerte] [cantidad] para asignarlos.")
+    await ctx.send(embed=embed)
+
+@bot.command(name="acender", aliases=["ascender"])
+@commands.cooldown(1, 10, commands.BucketType.user)
+async def acender(ctx):
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    slot = datos[str(ctx.author.id)]["slot_activo"]
+    pj = datos[str(ctx.author.id)]["slots"][slot]
+    
+    rango_actual = pj.get("rango", "Mago normal")
+    
+    try:
+        idx_actual = LISTA_RANGOS.index(rango_actual)
+    except ValueError:
+        idx_actual = 0
+        pj["rango"] = LISTA_RANGOS[0]
+
+    if idx_actual >= len(LISTA_RANGOS) - 1:
+        return await ctx.send(f"👑 {ctx.author.mention}, ¡ya has alcanzado el rango máximo absoluto: **{rango_actual}**!")
+
+    if pj["puntos"] < 1000:
+        return await ctx.send(f"❌ {ctx.author.mention}, requieres al menos **1000 puntos de XP** acumulados para ascender. Actualmente tienes `{pj['puntos']} Pts`.")
+
+    pj["puntos"] -= 1000
+    nuevo_rango = LISTA_RANGOS[idx_actual + 1]
+    pj["rango"] = nuevo_rango
+    guardar_datos(datos)
+
+    embed = discord.Embed(
+        title="🎖️ ¡Ascenso Imperial Otorgado! 🎖️",
+        description=f"¡Felicidades {ctx.author.mention}! Tus méritos han sido reconocidos en el **Slot {slot}**.",
+        color=discord.Color.from_rgb(0, 204, 255)
+    )
+    embed.add_field(name="📉 Costo:", value="`-1000 Pts`", inline=True)
+    embed.add_field(name="👑 Nuevo Rango:", value=f"**{nuevo_rango}**", inline=True)
+    await ctx.send(embed=embed)
+
+
+# Panel Interactivos de Perfil
+class PerfilView(discord.ui.View):
+    def __init__(self, miembro, ctx):
+        super().__init__(timeout=60.0)
+        self.miembro = miembro
+        self.ctx = ctx
+        self.pagina = 1
+
+    async def generar_embed(self):
+        datos_usuarios = cargar_datos()
+        verificar_usuario(self.miembro.id, datos_usuarios)
+        user = datos_usuarios[str(self.miembro.id)]
+        slot = user["slot_activo"]
+        pj = user["slots"][slot]
+
+        if self.pagina == 1:
+            embed = discord.Embed(title=f"📖 Ficha de Rol - {self.miembro.display_name}", color=discord.Color.from_rgb(47, 49, 54))
+            embed.description = f"🎴 **Slot Activo:** {slot}\n👤 **Nombre de Rol:** {pj['nombre_rp']}\n👑 **Exclusivo:** {pj.get('personaje_exclusivo', 'Ninguno')}\n\n🧬 **Raza:**\n{pj['raza']}\n\n🪄 **Magia:**\n{pj['magia']}\n\n🍀 **Grimorio:**\n{pj['grimorio']}\n\n😈 **Demonio Alojado:**\n`{pj.get('demonio', 'Ninguno')}`\n\n🎟️ **Spins (RR):** ⭐ {user['rerolls']}"
+            return embed
+        elif self.pagina == 2:
+            embed = discord.Embed(title=f"💰 Billetera e Inventario", color=discord.Color.gold())
+            inv_lista = ", ".join([f"`{i}`" for i in pj["inventario"]]) if pj["inventario"] else "*Vacío*"
+            armas_desc = ""
+            if pj["armas_equipadas"]:
+                for arma, stats in pj["armas_equipadas"].items():
+                    encantos = [f"{k.capitalize()}+{v}" for k, v in stats.items() if v > 0]
+                    armas_desc += f"⚔️ **{arma}** {f'({', '.join(encantos)})' if encantos else '*(Sin encantar)*'}\n"
+            else: armas_desc = "*Ninguna*"
+            embed.description = f"🎴 **Slot Activo:** {slot}\n\n🪙 **Yenes:** {pj['dinero']} ¥\n\n🎒 **Mochila:**\n{inv_lista}\n\n⚔️ **Armamento:**\n{armas_desc}\n👑 **Rango:** {pj['rango']} ({pj['puntos']} Pts)"
+            return embed
+        elif self.pagina == 3:
+            return discord.Embed(title=f"⚔️ Historial de Misiones", description="\n".join([f"✅ {m}" for m in pj["misiones_hechas"][-5:]]) if pj["misiones_hechas"] else "*Sin misiones*", color=discord.Color.purple())
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.grey)
+    async def boton_atras(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ No puedes controlar esto.", ephemeral=True)
+        self.pagina = 3 if self.pagina == 1 else self.pagina - 1
+        await interaction.response.edit_message(embed=await self.generar_embed(), view=self)
+
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.grey)
+    async def boton_siguiente(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ No puedes controlar esto.", ephemeral=True)
+        self.pagina = 1 if self.pagina == 3 else self.pagina + 1
+        await interaction.response.edit_message(embed=await self.generar_embed(), view=self)
+
+# Sinopsis de comandos
+class ComandosDropdown(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Sistema de Rol (Pág 1)", description="Registros, Perfiles, Atributos y Giros", emoji="🎮"),
+            discord.SelectOption(label="Economía y Armas (Pág 2)", description="Tienda, Compras, Balance y Encantos", emoji="🪙"),
+            discord.SelectOption(label="Staff Administrativo (Pág 3)", description="Misiones, Dinero, Rangos y Órdenes", emoji="🛡️"),
+            discord.SelectOption(label="Poderes de Owner (Pág 4)", description="Administración suprema, Exclusivos y Wipeos", emoji="👑"),
+            discord.SelectOption(label="Logs y Creación (Pág 5)", description="Control de auditorías y comandos dinámicos", emoji="⚙️")
+        ]
+        super().__init__(placeholder="Selecciona una categoría de comandos...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.view.ctx.author.id: return await interaction.response.send_message("❌ Menú bloqueado.", ephemeral=True)
+        if self.values[0] == "Sistema de Rol (Pág 1)": self.view.pagina = 1
+        elif self.values[0] == "Economía y Armas (Pág 2)": self.view.pagina = 2
+        elif self.values[0] == "Staff Administrativo (Pág 3)": self.view.pagina = 3
+        elif self.values[0] == "Poderes de Owner (Pág 4)": self.view.pagina = 4
+        elif self.values[0] == "Logs y Creación (Pág 5)": self.view.pagina = 5
+        await interaction.response.edit_message(embed=self.view.generar_embed_pagina(), view=self.view)
+
+class ComandosView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=120.0)
+        self.ctx = ctx
+        self.pagina = 1
+        self.add_item(ComandosDropdown())
+
+    def generar_embed_pagina(self):
+        embed = discord.Embed(color=discord.Color.from_rgb(43, 45, 49))
+        embed.set_footer(text=f"Página {self.pagina}/5 • {self.ctx.author.display_name}")
+        if self.pagina == 1:
+            embed.title = "🎮 Sistema de Rolplay (Jugadores)"
+            embed.description = "**+crearpj [Nombre]**\n└ Registra tu personaje.\n\n**+cambiarnombre [Nombre]**\n└ Cambia el nombre de tu PJ.\n\n**+perfil [@usuario]**\n└ Panel interactivo completo.\n\n**+pj [@usuario]**\n└ Resumen rápido de datos.\n\n**+slot [1/2/3]**\n└ Cambia de Slot de rol.\n\n**+reclamar**\n└ Recompensa diaria.\n\n**+entrenamiento**\n└ Entrena para ganar puntos de stats.\n\n**+acender**\n└ Asciende al próximo rango por 1000 Pts.\n\n**+stats [@usuario]**\n└ Muestra tus atributos.\n\n**+addstat [stat] [cantidad]**\n└ Invierte puntos de estadísticas.\n\n**+spin [tipo]** y **+rr [tipo]**\n└ Giros y rerolls de fichas."
+        elif self.pagina == 2:
+            embed.title = "🪙 Economía, Tienda y Equipamiento"
+            embed.description = "**+tienda**\n└ Catálogo completo.\n\n**+comprar [id]**\n└ Compra objetos.\n\n**+balance**\n└ Tu dinero actual.\n\n**+encantar [stat]**\n└ Añade +2 stats a tus armas por 2000 ¥.\n\n**+ranking**\n└ Top 10 magos más poderosos.\n\n**+listordenes**\n└ Clasificación de escuadrones."
+        elif self.pagina == 3:
+            embed.title = "🛡️ Staff Administrativo y Narración"
+            embed.description = "**+darmision [@usuario] [puntos] [desc]**\n└ Premia misiones.\n\n**+crear_mision [recompensa] [desc]**\n└ Añade misiones fijos.\n\n**+add_item / +remove_item**\n└ Control de tienda.\n\n**+add / +remover_yenes**\n└ Modifica dinero.\n\n**+dar_rr**\n└ Regala rerolls.\n\n**+crear_orden / +addstar / +deletestar**\n└ Control de escuadrones.\n\n**+narrar [1-5] [Enemigo]**\n└ Genera acciones de rol."
+        elif self.pagina == 4:
+            embed.title = "👑 Privado Owner, Co-Owner & Creador"
+            embed.description = "**+dar_exclusivo / +quitar_exclusivo / +lista_exclusivos**\n└ Gestión de personajes canon.\n\n**+crear_jerarquia**\n└ Inyecta todos los roles decorados automáticamente.\n\n**+daradmin / +quitaradmin** | **+daryuno / +quitaryuno**\n└ Gestión de permisos supremos del bot.\n\n**+viento_divino [msg]**\n└ Comunicado global con @everyone.\n\n**+dar_mítico**\n└ Entrega directa de razas/magias sin spins.\n\n**+impuesto_real** | **+banco_infinito** | **+wipe** | **+shutdown**\n└ Comandos absolutos de control técnico."
+        elif self.pagina == 5:
+            embed.title = "⚙️ Módulos de Auditoría y Personalización"
+            embed.description = "**+setlog [#canal]**\n└ Establece el canal de registros.\n\n**+crear_comando / +eliminar_comando / +lista_comandos**\n└ Gestión de comandos dinámicos."
+        return embed
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.blurple, row=1)
+    async def boton_atras(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ Bloqueado.", ephemeral=True)
+        self.pagina = 5 if self.pagina == 1 else self.pagina - 1
+        await interaction.response.edit_message(embed=self.generar_embed_pagina(), view=self)
+
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.blurple, row=1)
+    async def boton_siguiente(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ Bloqueado.", ephemeral=True)
+        self.pagina = 1 if self.pagina == 5 else self.pagina + 1
+        await interaction.response.edit_message(embed=self.generar_embed_pagina(), view=self)
+
+PERSONAJES_EXCLUSIVOS = {
+    "asta": {"nombre": "Asta", "fuerza": 20, "vida": 15, "agilidad": 10, "desc": "Antimagia. Fuerza descomunal y resistencia física absoluta."},
+    "yami": {"nombre": "Yami Sukehiro", "fuerza": 25, "vida": 15, "agilidad": 5, "desc": "Magia de Oscuridad. Cortes dimensionales destructivos."},
+    "noelle": {"nombre": "Noelle Silva", "fuerza": 5, "vida": 20, "agilidad": 15, "desc": "Magia de Agua. Armadura de Valquiria de altísima vitalidad."},
+    "yuno": {"nombre": "Yuno Grinberryall", "fuerza": 8, "vida": 12, "agilidad": 25, "desc": "Magia de Viento. Bendecido por el espíritu de sílfide."},
+    "zenon": {"nombre": "Zenon Zogratis", "fuerza": 22, "vida": 22, "agilidad": 11, "desc": "Magia de Huesos y Espacial. Contiene el poder de Beelzebub."},
+    "dante": {"nombre": "Dante Zogratis", "fuerza": 26, "vida": 24, "agilidad": 5, "desc": "Magia de Gravedad y Cuerpo. Regeneración gracias a Lucifero."},
+    "julius": {"nombre": "Julius Novachrono", "fuerza": 10, "vida": 20, "agilidad": 30, "desc": "Magia de Tiempo. Rey Mago. Control temporal absoluto."}
+}
+
+@bot.command(name="reclamar")
+@commands.cooldown(1, 86400, commands.BucketType.user)
+async def reclamar(ctx):
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    slot = datos[str(ctx.author.id)]["slot_activo"]
+    pj = datos[str(ctx.author.id)]["slots"][slot]
+    rango_actual = pj.get("rango", "Mago normal")
+    
+    recompensa_dinero = 500
+    puntos_regalo = 100
+    if rango_actual == "Caballero Mágico junior": recompensa_dinero, puntos_regalo = 1000, 150
+    elif rango_actual == "Caballero Mágico Intermedio": recompensa_dinero, puntos_regalo = 1800, 200
+    elif rango_actual == "Caballero Mágico Superior": recompensa_dinero, puntos_regalo = 2500, 250
+    elif rango_actual == "Caballero Mágico maximo": recompensa_dinero, puntos_regalo = 4000, 350
+    elif rango_actual == "Rey mago": recompensa_dinero, puntos_regalo = 6000, 500
+
+    pj["dinero"] += recompensa_dinero
+    pj["puntos"] += puntos_regalo
+    pj["rango"] = calcular_rango(pj["puntos"])
+    guardar_datos(datos)
+
+    embed = discord.Embed(title="═━  ᰋ  𝆬  🪷  ִ  ¡Recompensa Diaria Reclamada!  ִ   ⊹", description=f"> 💫 {ctx.author.mention}, por pertenecer al rango **{rango_actual}**, has obtenido tus recursos imperiales en tu **Slot {slot}**.", color=discord.Color.from_rgb(0, 255, 204))
+    embed.add_field(name="🪙 Yenes:", value=f"`+{recompensa_dinero} ¥` 💰", inline=True).add_field(name="✨ Puntos XP:", value=f"`+{puntos_regalo} Pts` 🔮", inline=True)
+    await ctx.send(embed=embed)
+
+@bot.command(name="crear_jerarquia", aliases=["crear-jerarquia"])
+async def crear_jerarquia(ctx):
+    if not ctx.author.guild_permissions.administrator: return await ctx.send("❌ Sin permisos.")
+    await ctx.send("⏳ *Inyectando roles decorados... Espera.*")
+    razas_roles = list(RAZAS.keys())
+    grimorios_roles = list(GRIMORIOS.keys())
+    magias_roles = list(MAGIAS.keys())
+
+    roles_a_crear = [
+        {"name": "🎨 ───✧ RESERVADO ✧───", "color": discord.Color.default()},
+        {"name": "ᶻz﹒⏆﹒Owner﹒⟢", "color": discord.Color.from_rgb(255, 0, 85)},
+        {"name": "ᶻz﹒⏆﹒Co owner﹒⟢", "color": discord.Color.from_rgb(255, 85, 0)},
+        {"name": "ᶻz﹒⏆﹒Head admin﹒⟢", "color": discord.Color.from_rgb(230, 0, 255)},
+        {"name": "⌑﹒ꔫ﹒Admin﹒⟢", "color": discord.Color.from_rgb(153, 0, 255)},
+        {"name": "⌑﹒ꔫ﹒Asistente﹒⟢", "color": discord.Color.from_rgb(0, 204, 255)},
+        {"name": "⌑﹒ꔫ﹒Moderador﹒⟢", "color": discord.Color.from_rgb(0, 255, 102)},
+        {"name": "⏆﹒⿻﹒Developer﹒﹒┄", "color": discord.Color.from_rgb(255, 187, 0)},
+        {"name": "⏆﹒⿻﹒Staff﹒﹒┄", "color": discord.Color.from_rgb(51, 255, 170)},
+        {"name": "﹙◞◟﹚﹒(Mini staff)﹒﹒✾", "color": discord.Color.from_rgb(119, 255, 170)},
+        {"name": "⿴﹒﹒⌑﹒Bots﹒✦", "color": discord.Color.from_rgb(127, 140, 141)},
+        {"name": "🌿 ───✧ CIUDADANOS ✧───", "color": discord.Color.default()},
+        {"name": "⿴﹒﹒⌑﹒Verificado﹒✦", "color": discord.Color.blue()},
+        {"name": "[e]﹒谷﹒⏆﹒Miembro﹒⭔", "color": discord.Color.green()},
+        {"name": "╭╯﹒〣ꔫ﹒***．⟡﹒ RAZAS ﹒﹒⪨﹒***", "color": discord.Color.default()}
+    ]
+    for r in razas_roles: roles_a_crear.append({"name": f"ılıl﹐𖥻﹒ {r} ﹒౨ৎ", "color": discord.Color.red()})
+    roles_a_crear.append({"name": "╭╯﹒〣ꔫ﹒***．⟡﹒ GRIMORIOS ﹒﹒⪨﹒***", "color": discord.Color.default()})
+    for g in grimorios_roles: roles_a_crear.append({"name": f"∿﹒✢﹒ {g} ﹒ᶻz", "color": discord.Color.gold()})
+    roles_a_crear.append({"name": "╭╯﹒〣ꔫ﹒***．⟡﹒ MAGIAS ﹒﹒⪨﹒***", "color": discord.Color.default()})
+    for index, m in enumerate(magias_roles):
+        estilos = [f"⌑﹒ꔫ﹒ {m} ﹒⟢", f"⿴﹒﹒⌑﹒ {m} ﹒✦", f"⟢﹒ᶻz﹒ {m} ﹒➜", f"𖥻﹒✿﹒ {m} ﹒﹙◞◟﹚"]
+        roles_a_crear.append({"name": estilos[index % len(estilos)], "color": discord.Color.purple()})
+
+    roles_a_crear.extend([
+        {"name": "🌸 ───✧ NOTIFICACIONES ✧───", "color": discord.Color.default()},
+        {"name": "✿﹒Alianza﹒ꗃ﹒﹒⭔", "color": discord.Color.teal()},
+        {"name": "✿﹒Sorteos﹒ꗃ﹒﹒⭔", "color": discord.Color.orange()},
+        {"name": "✿﹒Anuncio﹒ꗃ﹒﹒⭔", "color": discord.Color.gold()},
+        {"name": "✿﹒Revivir chat﹒ꗃ﹒﹒⭔", "color": discord.Color.dark_grey()}
+    ])
+    for rol_data in roles_a_crear:
+        try:
+            await ctx.guild.create_role(name=rol_data["name"], color=rol_data["color"], reason="Jerarquía")
+            await asyncio.sleep(0.15)
+        except: pass
+    await ctx.send("✅ Roles creados.")
+
+@bot.command(name="dar_exclusivo")
+async def dar_exclusivo(ctx, miembro: discord.Member = None, id_personaje: str = None):
+    if not es_admin_bot(ctx): return
+    if not miembro or not id_personaje: return await ctx.send("❌ Uso: `+dar_exclusivo [@usuario] [id]`")
+    id_limpia = id_personaje.lower().strip()
+    if id_limpia not in PERSONAJES_EXCLUSIVOS: return await ctx.send("❌ ID inválido.")
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    slot = datos[str(miembro.id)]["slot_activo"]
+    pj = datos[str(miembro.id)]["slots"][slot]
+    
+    personaje_antiguo = pj.get("personaje_exclusivo", "Ninguno")
+    if personaje_antiguo != "Ninguno":
+        id_antigua = next((k for k, v in PERSONAJES_EXCLUSIVOS.items() if v["nombre"].lower() == personaje_antiguo.lower()), None)
+        if id_antigua:
+            pj["fuerza"] = max(0, pj["fuerza"] - PERSONAJES_EXCLUSIVOS[id_antigua]["fuerza"])
+            pj["vida"] = max(0, pj["vida"] - PERSONAJES_EXCLUSIVOS[id_antigua]["vida"])
+            pj["agilidad"] = max(0, pj["agilidad"] - PERSONAJES_EXCLUSIVOS[id_antigua]["agilidad"])
+
+    p_nuevo = PERSONAJES_EXCLUSIVOS[id_limpia]
+    pj["personaje_exclusivo"] = p_nuevo["nombre"]
+    pj["fuerza"] += p_nuevo["fuerza"]
+    pj["vida"] += p_nuevo["vida"]
+    pj["agilidad"] += p_nuevo["agilidad"]
+    guardar_datos(datos)
+    await ctx.send(f"✅ Otorgado **{p_nuevo['nombre']}** a {miembro.mention}.")
+
+@bot.command(name="quitar_exclusivo")
+async def quitar_exclusivo(ctx, miembro: discord.Member = None):
+    if not es_admin_bot(ctx): return
+    if not miembro: return await ctx.send("❌ Uso: `+quitar_exclusivo [@usuario]`")
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    slot = datos[str(miembro.id)]["slot_activo"]
+    pj = datos[str(miembro.id)]["slots"][slot]
+    personaje_actual = pj.get("personaje_exclusivo", "Ninguno")
+    if personaje_actual == "Ninguno": return await ctx.send("❌ No tiene personaje exclusivo.")
+    id_limpia = next((k for k, v in PERSONAJES_EXCLUSIVOS.items() if v["nombre"].lower() == personaje_actual.lower()), None)
+    if id_limpia:
+        pj["fuerza"] = max(0, pj["fuerza"] - PERSONAJES_EXCLUSIVOS[id_limpia]["fuerza"])
+        pj["vida"] = max(0, pj["vida"] - PERSONAJES_EXCLUSIVOS[id_limpia]["vida"])
+        pj["agilidad"] = max(0, pj["agilidad"] - PERSONAJES_EXCLUSIVOS[id_limpia]["agilidad"])
+    pj["personaje_exclusivo"] = "Ninguno"
+    guardar_datos(datos)
+    await ctx.send(f"🧹 Removido de {miembro.mention}.")
+
+@bot.command(name="lista_exclusivos")
+async def lista_exclusivos(ctx):
+    embed = discord.Embed(title="⚜️ Personajes Exclusivos Disponibles ⚜️", color=discord.Color.dark_blue())
+    for k, v in PERSONAJES_EXCLUSIVOS.items():
+        embed.add_field(name=f"👤 {v['nombre']} (`{k}`)", value=f"📊 💪 F +{v['fuerza']} | ❤️ V +{v['vida']} | ⚡ A +{v['agilidad']}", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command(name="crearpj")
+async def crearpj(ctx, *, nombre: str = None):
+    if not nombre: return await ctx.send("❌ Uso: `+crearpj [Nombre]`")
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    slot = datos[str(ctx.author.id)]["slot_activo"]
+    datos[str(ctx.author.id)]["slots"][slot]["nombre_rp"] = nombre
+    guardar_datos(datos)
+    await ctx.send(f"✅ Slot {slot} registrado como **{nombre}**.")
+
+@bot.command(name="cambiarnombre")
+async def cambiarnombre(ctx, *, nombre: str = None):
+    if not nombre: return await ctx.send("❌ Uso: `+cambiarnombre [Nombre]`")
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    slot = datos[str(ctx.author.id)]["slot_activo"]
+    datos[str(ctx.author.id)]["slots"][slot]["nombre_rp"] = nombre
+    guardar_datos(datos)
+    await ctx.send(f"🔄 Nombre cambiado en Slot {slot}.")
+
+@bot.command(name="pj")
+async def pj_info(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    slot = datos[str(miembro.id)]["slot_activo"]
+    pj = datos[str(miembro.id)]["slots"][slot]
+    embed = discord.Embed(title=f"👤 Slot {slot}", color=discord.Color.green())
+    embed.add_field(name="Usuario:", value=miembro.mention).add_field(name="Nombre RP:", value=pj['nombre_rp']).add_field(name="Canon:", value=pj.get('personaje_exclusivo', 'Ninguno'))
+    await ctx.send(embed=embed)
+
+@bot.command(name="daryuno")
+@commands.is_owner()
+async def daryuno(ctx, miembro: discord.Member):
+    datos = cargar_datos()
+    if miembro.id not in datos["co_owners"]: datos["co_owners"].append(miembro.id)
+    guardar_datos(datos)
+    await ctx.send(f"👑 {miembro.mention} ahora es Co-Owner.")
+
+@bot.command(name="quitaryuno")
+@commands.is_owner()
+async def quitaryuno(ctx, miembro: discord.Member):
+    datos = cargar_datos()
+    if miembro.id in datos["co_owners"]: datos["co_owners"].remove(miembro.id)
+    guardar_datos(datos)
+    await ctx.send(f"🧹 Revocado Rango Yuno a {miembro.mention}.")
+
+@bot.command(name="viento_divino")
+@es_owner_o_coowner()
+async def viento_divino(ctx, *, mensaje: str):
+    embed = discord.Embed(title="🌪️ ¡Decreto del Co-Owner Yuno! 🌪️", description=mensaje, color=discord.Color.green())
+    await ctx.send(content="@everyone", embed=embed)
+
+@bot.command(name="dar_mítico")
+@es_owner_o_coowner()
+async def dar_mitico(ctx, miembro: discord.Member, tipo: str, *, objeto_nombre: str):
+    if tipo.lower().strip() not in ["raza", "magia", "grimorio", "demonio"]: return
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    slot = datos[str(miembro.id)]["slot_activo"]
+    datos[str(miembro.id)]["slots"][slot][tipo.lower().strip()] = objeto_nombre
+    guardar_datos(datos)
+    await asignar_rol_automatico(ctx, tipo, objeto_nombre)
+    await ctx.send(f"👑 Infundido {objeto_nombre} a {miembro.mention}.")
+
+@bot.command(name="impuesto_real")
+@es_owner_o_coowner()
+async def impuesto_real(ctx, cantidad: int):
+    if cantidad <= 0: return
+    datos = cargar_datos()
+    for uid in datos:
+        if uid in ["ordenes", "admins", "co_owners", "canal_logs", "comandos_creados", "tienda_personalizada", "tablero_misiones"]: continue
+        s = datos[uid].get("slot_activo", "1")
+        if "slots" in datos[uid] and s in datos[uid]["slots"]:
+            datos[uid]["slots"][s]["dinero"] = max(0, datos[uid]["slots"][s]["dinero"] - cantidad)
+    guardar_datos(datos)
+    await ctx.send("💸 Impuesto Real cobrado.")
+
+@bot.command(name="banco_infinito")
+@es_owner_o_coowner()
+async def banco_infinito(ctx):
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    slot = datos[str(ctx.author.id)]["slot_activo"]
+    datos[str(ctx.author.id)]["rerolls"] = 999
+    datos[str(ctx.author.id)]["slots"][slot]["dinero"] = 999999
+    guardar_datos(datos)
+    await ctx.send("👑 Recursos Infinitas.")
+
+@bot.command(name="wipe")
+@es_owner_o_coowner()
+async def wipe(ctx, miembro: discord.Member):
+    datos = cargar_datos()
+    if str(miembro.id) in datos: del datos[str(miembro.id)]
+    guardar_datos(datos)
+    await ctx.send(f"🧹 Wipeado {miembro.mention}.")
+
+@bot.command(name="shutdown")
+@commands.is_owner()
+async def shutdown(ctx):
+    await ctx.send("🛑 Apagando...")
+    await bot.close()
+
+@bot.command(name="crear_orden")
+async def crear_orden(ctx, canal: discord.TextChannel = None, *, nombre_orden: str = None):
+    if not es_admin_bot(ctx): return
+    if not canal or not nombre_orden: return
+    datos = cargar_datos()
+    datos["ordenes"][nombre_orden.strip().lower()] = {"nombre_real": nombre_orden, "estrellas": 0, "canal_id": canal.id}
+    guardar_datos(datos)
+    await ctx.send(f"🏰 Orden {nombre_orden} creada.")
+
+@bot.command(name="daradmin")
+@commands.is_owner()
+async def daradmin(ctx, miembro: discord.Member):
+    datos = cargar_datos()
+    if miembro.id not in datos["admins"]: datos["admins"].append(miembro.id)
+    guardar_datos(datos)
+    await ctx.send(f"🛡️ Admin bot asignado a {miembro.mention}.")
+
+@bot.command(name="quitaradmin")
+@commands.is_owner()
+async def quitaradmin(ctx, miembro: discord.Member):
+    datos = cargar_datos()
+    if miembro.id in datos["admins"]: datos["admins"].remove(miembro.id)
+    guardar_datos(datos)
+    await ctx.send(f"🧹 Admin bot revocado a {miembro.mention}.")
+
+@bot.command(name="add")
+async def add(ctx, miembro: discord.Member = None, cantidad: int = None):
+    if not es_admin_bot(ctx): return
+    if not miembro or cantidad is None or cantidad <= 0: return
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    slot = datos[str(miembro.id)]["slot_activo"]
+    datos[str(miembro.id)]["slots"][slot]["dinero"] += cantidad
+    guardar_datos(datos)
+    await ctx.send(f"🪙 +{cantidad} Yenes entregados.")
+
+@bot.command(name="remover_yenes")
+async def remover_yenes(ctx, miembro: discord.Member = None, cantidad: int = None):
+    if not es_admin_bot(ctx): return
+    if not miembro or cantidad is None or cantidad <= 0: return
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    slot = datos[str(miembro.id)]["slot_activo"]
+    datos[str(miembro.id)]["slots"][slot]["dinero"] = max(0, datos[str(miembro.id)]["slots"][slot]["dinero"] - cantidad)
+    guardar_datos(datos)
+    await ctx.send("📉 Fondos retirados.")
+
+@bot.command(name="dar_rr")
+async def dar_rr(ctx, miembro: discord.Member = None, cantidad: int = None):
+    if not es_admin_bot(ctx): return
+    if not miembro or cantidad is None or cantidad <= 0: return
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    datos[str(miembro.id)]["rerolls"] += cantidad
+    guardar_datos(datos)
+    await ctx.send(f"🎟️ +{cantidad} Rerolls.")
+
+@bot.command(name="addstar")
+async def addstar(ctx, cantidad: int = None, *, nombre_orden: str = None):
+    if not es_admin_bot(ctx) or cantidad is None or not nombre_orden: return
+    datos = cargar_datos()
+    k = nombre_orden.strip().lower()
+    if k in datos["ordenes"]: datos["ordenes"][k]["estrellas"] += cantidad
+    guardar_datos(datos)
+    await ctx.send("✨ Estrellas sumadas.")
+
+@bot.command(name="deletestar")
+async def deletestar(ctx, cantidad: int = None, *, nombre_orden: str = None):
+    if not es_admin_bot(ctx) or cantidad is None or not nombre_orden: return
+    datos = cargar_datos()
+    k = nombre_orden.strip().lower()
+    if k in datos["ordenes"]: datos["ordenes"][k]["estrellas"] -= cantidad
+    guardar_datos(datos)
+    await ctx.send("📉 Estrellas restadas.")
+
+@bot.command(name="listordenes")
+async def listordenes(ctx):
+    datos = cargar_datos()
+    if not datos.get("ordenes"): return await ctx.send("🏰 No hay órdenes.")
+    embed = discord.Embed(title="⚜️ Clasificación Oficial ⚜️", color=discord.Color.dark_purple())
+    for o in sorted(datos["ordenes"].values(), key=lambda x: x["estrellas"], reverse=True):
+        embed.add_field(name=o['nombre_real'], value=f"✨ Estrellas: {o['estrellas']}", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command(name="ranking", aliases=["top"])
+async def ranking(ctx):
+    datos = cargar_datos()
+    lista = []
+    for uid, info in datos.items():
+        if uid in ["ordenes", "admins", "co_owners", "canal_logs", "comandos_creados", "tienda_personalizada", "tablero_misiones"]: continue
+        m = ctx.guild.get_member(int(uid))
+        name = m.display_name if m else f"Mago ({uid})"
+        pj = info.get("slots", {}).get(info.get("slot_activo", "1"), {})
+        lista.append({"n": name, "p": pj.get("puntos", 0), "r": pj.get("rango", "Mago normal")})
+    embed = discord.Embed(title="🏆 TOP 10 Magos 🏆", color=discord.Color.red())
+    for i, m in enumerate(sorted(lista, key=lambda x: x["p"], reverse=True)[:10]):
+        embed.add_field(name=f"#{i+1} {m['n']}", value=f"⭐ Puntos: **{m['p']}** | `{m['r']}`", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command(name="stats")
+async def stats(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    pj = datos[str(miembro.id)]["slots"][datos[str(miembro.id)]["slot_activo"]]
+    embed = discord.Embed(title=f"📊 Stats — {miembro.display_name}", description=f"💪 Fuerza: `{pj['fuerza']}`\n❤️ Vida: `{pj['vida']}`\n⚡ Agilidad: `{pj['agilidad']}`\n🍀 Suerte: `{pj['suerte']}`\n✨ Puntos libres: `{pj['puntos_stats']}`", color=discord.Color.blue())
+    await ctx.send(embed=embed)
+
+@bot.command(name="addstat")
+async def addstat(ctx, estadistica: str = None, cantidad: int = None):
+    if not estadistica or cantidad is None or cantidad <= 0: 
+        return await ctx.send("❌ Uso correcto: `+addstat [fuerza/vida/agilidad/suerte] [cantidad]`")
+    
+    stat_target = estadistica.lower().strip()
+    if stat_target not in ["fuerza", "vida", "agilidad", "suerte"]:
+        return await ctx.send("❌ Estadística inválida.")
+
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    pj = datos[str(ctx.author.id)]["slots"][datos[str(ctx.author.id)]["slot_activo"]]
+    
+    if pj["puntos_stats"] < cantidad: 
+        return await ctx.send("❌ No posees suficientes puntos libres.")
+        
+    pj["puntos_stats"] -= cantidad
+    pj[stat_target] += cantidad
+    guardar_datos(datos)
+    await ctx.send(f"✅ Se asignaron +{cantidad} puntos a **{stat_target.capitalize()}**.")
+
+@bot.command(name="encantar")
+async def encantar(ctx, stat_a_encantar: str = None):
+    if not stat_a_encantar or stat_a_encantar.lower().strip() not in ["fuerza", "vida", "agilidad", "suerte"]: 
+        return await ctx.send("❌ Elige una estadística válida para encantar.")
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    pj = datos[str(ctx.author.id)]["slots"][datos[str(ctx.author.id)]["slot_activo"]]
+    if not pj.get("armas_equipadas") or pj["dinero"] < 2000: return
+    nombre_arma = list(pj["armas_equipadas"].keys())[0]
+    pj["dinero"] -= 2000
+    pj["armas_equipadas"][nombre_arma].setdefault(stat_a_encantar.lower(), 0)
+    pj["armas_equipadas"][nombre_arma][stat_a_encantar.lower()] += 2
+    guardar_datos(datos)
+    await ctx.send("✨ Arma Encantada.")
+
+@bot.command()
+async def tienda(ctx):
+    datos = cargar_datos()
+    embed = discord.Embed(title="🛒 Tienda Clover 🛒", color=discord.Color.gold())
+    for k, v in TIENDA_ITEMS_BASE.items(): embed.add_field(name=f"{v['nombre']} (`{k}`)", value=f"💰 **{v['precio']} ¥**\n*{v['desc']}*", inline=False)
+    for k, v in datos.get("tienda_personalizada", {}).items(): embed.add_field(name=f"{v['nombre']} (`{k}`)", value=f"💰 **{v['precio']} ¥**", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def comprar(ctx, itemId: str = None):
+    if not itemId: return
+    id_l = itemId.lower().strip()
+    datos = cargar_datos()
+    item = TIENDA_ITEMS_BASE.get(id_l) or datos.get("tienda_personalizada", {}).get(id_l)
+    if not item: return
+    verificar_usuario(ctx.author.id, datos)
+    pj = datos[str(ctx.author.id)]["slots"][datos[str(ctx.author.id)]["slot_activo"]]
+    if pj["dinero"] < item["precio"]: return
+    pj["dinero"] -= item["precio"]
+    if item.get("es_arma"): pj["armas_equipadas"][item["nombre"]] = {"fuerza": 0, "vida": 0, "agilidad": 0, "suerte": 0}
+    else: pj["inventario"].append(item["nombre"])
+    guardar_datos(datos)
+    await ctx.send("✅ Ítem comprado.")
+
+@bot.command(name="add_item")
+async def add_item(ctx, id_item: str = None, precio: int = None, *, nombre_y_desc: str = None):
+    if not es_admin_bot(ctx) or not id_item or precio is None or not nombre_y_desc: return
+    datos = cargar_datos()
+    datos["tienda_personalizada"][id_item.lower().strip()] = {"nombre": nombre_y_desc, "precio": precio, "es_arma": False}
+    guardar_datos(datos)
+    await ctx.send("✅ Agregado a la tienda.")
+
+@bot.command(name="remove_item")
+async def remove_item(ctx, id_item: str = None):
+    if not es_admin_bot(ctx) or not id_item: return
+    datos = cargar_datos()
+    if id_item.lower().strip() in datos["tienda_personalizada"]: del datos["tienda_personalizada"][id_item.lower().strip()]
+    guardar_datos(datos)
+    await ctx.send("🗑️ Eliminado de la tienda.")
+
+@bot.command(name="crear_mision")
+async def crear_mision(ctx, recompensa: int = None, *, descripcion: str = None):
+    if not es_admin_bot(ctx) or recompensa is None or not descripcion: return
+    datos = cargar_datos()
+    datos["tablero_misiones"].append({"id": len(datos["tablero_misiones"]) + 1, "recompensa": recompensa, "desc": descripcion})
+    guardar_datos(datos)
+    await ctx.send("📜 Misión publicada.")
+
+@bot.command(name="darmision")
+async def darmision(ctx, miembro: discord.Member, puntos: int, *, descripcion_mision: str):
+    if not es_admin_bot(ctx) or puntos <= 0: return
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    pj = datos[str(miembro.id)]["slots"][datos[str(miembro.id)]["slot_activo"]]
+    pj["puntos"] += puntos
+    pj["dinero"] += (puntos * 2)
+    pj["puntos_stats"] += max(2, (puntos // 100) * 5)
+    pj["misiones_hechas"].append(f"{descripcion_mision} (+{puntos} Pts)")
+    pj["rango"] = calcular_rango(pj["puntos"])
+    guardar_datos(datos)
+    await ctx.send(f"✅ Misión guardada para {miembro.mention}.")
+
+@bot.command(name="narrar")
+async def narrar(ctx, rango: str = None, *, enemigo: str = None):
+    if not rango or not enemigo: return
+    acciones = {
+        "5": ["El enemigo saca un arma oxidada.", "El rival lanza piedras de maná débil."],
+        "4": ["El oponente levanta una barrera agrietada.", "El contrincante retrocede."],
+        "3": ["El enemigo invoca un elemental mediano.", "El oponente ejecuta una atadura."],
+        "2": ["El rival libera un hechizo de área medio.", "El enemigo imbuye magia veloz en sus pies."],
+        "1": ["💥 ¡Peligro Absoluto! Hechizo definitivo.", "El jefe absorbe maná natural duplicando su fuerza."]
+    }
+    if rango in acciones: await ctx.send(embed=discord.Embed(title="⚔️ Acción de Combate ⚔️", description=f"**Objetivo:** {enemigo}\n**Acción:** *{random.choice(acciones[rango])}*", color=discord.Color.red()))
+
+@bot.command()
+async def slot(ctx, numero: str = None):
+    if numero not in ["1", "2", "3"]: return
+    datos = cargar_datos()
+    verificar_usuario(ctx.author.id, datos)
+    datos[str(ctx.author.id)]["slot_activo"] = numero
+    guardar_datos(datos)
+    await ctx.send(f"🔄 Cambiado al Slot {numero}.")
+
+@bot.command(name="perfil")
+async def perfil(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+    view = PerfilView(miembro, ctx)
+    await ctx.send(embed=await view.generar_embed(), view=view)
+
+@bot.command(aliases=["bal"])
+async def balance(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    s = datos[str(miembro.id)]["slot_activo"]
+    await ctx.send(f"🪙 Balance Slot {s}: **{datos[str(miembro.id)]['slots'][s]['dinero']} ¥**.")
+
+@bot.command(name="comandos")
+async def comandos(ctx):
+    view = ComandosView(ctx)
+    await ctx.send(embed=view.generar_embed_pagina(), view=view)
+
+@bot.command(name="setlog")
+async def setlog(ctx, canal: discord.TextChannel = None):
+    if not es_admin_bot(ctx): return
+    if not canal: return await ctx.send("❌ **Uso correcto:** `+setlog [#canal]`")
+    datos = cargar_datos()
+    datos["canal_logs"] = canal.id
+    guardar_datos(datos)
+    await ctx.send(f"⚙️ **[LOGS]** Canal de auditoría establecido en {canal.mention}.")
+
+@bot.command(name="crear_comando")
+async def crear_comando(ctx, nombre: str = None, *, contenido: str = None):
+    if not es_admin_bot(ctx) or not nombre or not contenido: return
+    nombre_limpio = nombre.lower().replace("+", "").strip()
+    if bot.get_command(nombre_limpio): return await ctx.send(f"❌ Comando base protegido.")
+    datos = cargar_datos()
+    datos["comandos_creados"][nombre_limpio] = contenido
+    guardar_datos(datos)
+    await ctx.send(f"✅ ¡Comando `+{nombre_limpio}` creado!")
+
+@bot.command(name="eliminar_comando")
+async def eliminar_comando(ctx, nombre: str = None):
+    if not es_admin_bot(ctx) or not nombre: return
+    nombre_limpio = nombre.lower().replace("+", "").strip()
+    datos = cargar_datos()
+    if nombre_limpio in datos["comandos_creados"]:
+        del datos["comandos_creados"][nombre_limpio]
+        guardar_datos(datos)
+        await ctx.send(f"🧹 Comando `+{nombre_limpio}` removido.")
+
+@bot.command(name="lista_commands", aliases=["lista_comandos"])
+async def lista_commands(ctx):
+    datos = cargar_datos()
+    embed = discord.Embed(title="⚙️ Comandos Creados por el Usuario", color=discord.Color.teal())
+    for cmd, desc in datos.get("comandos_creados", {}).items(): embed.add_field(name=f"+{cmd}", value=f"└ *{desc[:100]}*", inline=False)
+    await ctx.send(embed=embed)
+
+
+# =========================================================================
+# 📡 SECCIÓN DE LOGS ABSOLUTOS Y EVENTOS (BLINDADA)
+# =========================================================================
+
+@bot.event
+async def on_message(message):
+    if message.author.bot: return
+
+    if not message.content.startswith("+"):  
+        datos = cargar_datos()
+        if datos.get("canal_logs"):
+            canal_log = bot.get_channel(datos["canal_logs"])
+            if canal_log and message.channel.id != datos["canal_logs"]:
+                embed = discord.Embed(title="💬 Mensaje Enviado", color=discord.Color.light_grey())
+                embed.add_field(name="Autor:", value=message.author.mention, inline=True)
+                embed.add_field(name="Canal:", value=message.channel.mention, inline=True)
+                embed.add_field(name="Contenido:", value=f"```{message.content or '[Mensaje sin texto]'}```", inline=False)
+                await canal_log.send(embed=embed)
+
+    if message.content.startswith("+"):
+        datos = cargar_datos()
+        tokens = message.content.split(" ")
+        cmd_invocado = tokens[0][1:].lower()
+
+        if cmd_invocado in datos.get("comandos_creados", {}):
+            respuesta = datos["comandos_creados"][cmd_invocado]
+            respuesta_parseada = respuesta.replace("@usuario", message.author.mention)
+            await message.channel.send(respuesta_parseada)
+            
+            if datos.get("canal_logs"):
+                canal_log = bot.get_channel(datos["canal_logs"])
+                if canal_log:
+                    embed = discord.Embed(title="⚙️ Comando Personalizado Ejecutado", color=discord.Color.dark_grey())
+                    embed.add_field(name="Autor:", value=message.author.mention, inline=True)
+                    embed.add_field(name="Comando:", value=f"`+{cmd_invocado}`", inline=False)
+                    await canal_log.send(embed=embed)
+            return
+
+    ctx = await bot.get_context(message)
+    if ctx.valid and ctx.command:
+        datos = cargar_datos()
+        if datos.get("canal_logs"):
+            canal_log = bot.get_channel(datos["canal_logs"])
+            if canal_log and ctx.command.name != "setlog":
+                embed = discord.Embed(title="🤖 Comando del Bot Ejecutado", color=discord.Color.blue())
+                embed.add_field(name="Mago:", value=message.author.mention, inline=True)
+                embed.add_field(name="Mensaje Completo:", value=f"`{message.content}`", inline=False)
+                await canal_log.send(embed=embed)
+
+    if message.attachments:
+        datos = cargar_datos()
+        if datos.get("canal_logs"):
+            canal_log = bot.get_channel(datos["canal_logs"])
+            if canal_log:
+                embed = discord.Embed(title="🖼️ Archivo Publicado", color=discord.Color.purple())
+                embed.add_field(name="Usuario:", value=message.author.mention, inline=True)
+                if message.attachments[0].content_type and "image" in message.attachments[0].content_type:
+                    embed.set_image(url=message.attachments[0].url)
+                else:
+                    embed.add_field(name="Archivo:", value=f"[{message.attachments[0].name}]({message.attachments[0].url})", inline=False)
+                await canal_log.send(embed=embed)
+
+    await bot.process_commands(message)
+
+@bot.event
+async def on_message_delete(message):
+    if message.author is None or message.author.bot: return
+    datos = cargar_datos()
+    if datos.get("canal_logs"):
+        canal_log = bot.get_channel(datos["canal_logs"])
+        if canal_log:
+            embed = discord.Embed(title="🗑️ Mensaje Eliminado", color=discord.Color.red())
+            embed.add_field(name="Autor:", value=message.author.mention, inline=True)
+            embed.add_field(name="Canal:", value=message.channel.mention, inline=True)
+            contenido = message.content if message.content else "*(Embed o archivo)*"
+            embed.add_field(name="Contenido original:", value=f"```{contenido}```", inline=False)
+            await canal_log.send(embed=embed)
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.author is None or before.author.bot: return
+    if before.content == after.content: return
+    datos = cargar_datos()
+    if datos.get("canal_logs"):
+        canal_log = bot.get_channel(datos["canal_logs"])
+        if canal_log:
+            embed = discord.Embed(title="📝 Mensaje Editado", color=discord.Color.orange())
+            embed.add_field(name="Autor:", value=before.author.mention, inline=True)
+            embed.add_field(name="Canal:", value=before.channel.mention, inline=True)
+            embed.add_field(name="Antes:", value=f"```{before.content}```", inline=False)
+            embed.add_field(name="Después:", value=f"```{after.content}```", inline=False)
+            await canal_log.send(embed=embed)
+
+@bot.event
+async def on_member_update(before, after):
+    datos = cargar_datos()
+    if not datos.get("canal_logs"): return
+    canal_log = bot.get_channel(datos["canal_logs"])
+    if not canal_log: return
+
+    if before.roles != after.roles:
+        embed = discord.Embed(title="🛡️ Roles Actualizados en un Usuario", color=discord.Color.blue())
+        embed.add_field(name="Usuario afectado:", value=after.mention, inline=False)
+        
+        roles_anadidos = [role.mention for role in after.roles if role not in before.roles]
+        roles_quitados = [role.mention for role in before.roles if role not in after.roles]
+        
+        if roles_anadidos: embed.add_field(name="Rol(es) Añadido(s) ✅", value=", ".join(roles_anadidos), inline=False)
+        if roles_quitados: embed.add_field(name="Rol(es) Quitado(s) ❌", value=", ".join(roles_quitados), inline=False)
+        await canal_log.send(embed=embed)
+
+@bot.event
+async def on_guild_update(before, after):
+    datos = cargar_datos()
+    if not datos.get("canal_logs"): return
+    canal_log = bot.get_channel(datos["canal_logs"])
+    if not canal_log: return
+
+    embed = discord.Embed(title="⚙️ Modificación en los Ajustes del Servidor", color=discord.Color.dark_magenta())
+    cambios = False
+
+    if before.name != after.name:
+        embed.add_field(name="Nombre del Servidor cambiado", value=f"**Antes:** {before.name}\n**Ahora:** {after.name}", inline=False)
+        cambios = True
+
+    if cambios:
+        await canal_log.send(embed=embed)
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.NotOwner) or "No tienes rango de Creador" in str(error):
+        await ctx.send("⛔ **Error Mágico:** Poder supremo reservado para los dueños reales del bot.")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ **Maná Exhausto:** Espera `{error.retry_after:.1f}` segundos para usar este comando de nuevo.", delete_after=5)
+    elif isinstance(error, commands.CommandNotFound): 
+        pass
+
+@bot.event
+async def on_ready():
+    app_info = await bot.application_info()
+    bot.owner_id = app_info.owner.id
+    init_db()
+    print(f"🤖 Conectado como: {bot.user} | ¡Listos para el Rolplay!")
+
+TOKEN = os.environ.get("TOKEN")
+bot.run(TOKEN)
+

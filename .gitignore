@@ -1,0 +1,6 @@
+.env
+*.env
+usuarios_rp.json
+usuarios_rp.json.migrado
+__pycache__/
+*.pyc
