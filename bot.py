@@ -1235,6 +1235,9 @@ async def on_ready():
     init_db()
     print(f"🤖 Conectado como: {bot.user} | ¡Listos para el Rolplay!")
 
+from skills import setup_skills
+setup_skills(bot)
+
 TOKEN = os.environ.get("TOKEN")
 bot.run(TOKEN)
 
