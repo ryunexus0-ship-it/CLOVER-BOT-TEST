@@ -902,6 +902,41 @@ async def addstat(ctx, estadistica: str = None, cantidad: int = None):
     guardar_datos(datos)
     await ctx.send(f"✅ Se asignaron +{cantidad} puntos a **{stat_target.capitalize()}**.")
 
+@bot.command(name="darstat")
+async def darstat(ctx, miembro: discord.Member = None, estadistica: str = None, cantidad: int = None):
+    """Admin: da puntos de estadística directamente a un jugador. +darstat [@usuario] [fuerza/vida/agilidad/suerte/libre] [cantidad]"""
+    if not es_admin_bot(ctx):
+        return await ctx.send("❌ No tienes permisos para usar este comando.")
+    if not miembro or not estadistica or cantidad is None or cantidad <= 0:
+        return await ctx.send("❌ Uso: `+darstat [@usuario] [fuerza/vida/agilidad/suerte/libre] [cantidad]`")
+
+    stat_target = estadistica.lower().strip()
+    if stat_target not in ["fuerza", "vida", "agilidad", "suerte", "libre"]:
+        return await ctx.send("❌ Estadística inválida. Usa: `fuerza`, `vida`, `agilidad`, `suerte` o `libre` (puntos sin asignar).")
+
+    datos = cargar_datos()
+    verificar_usuario(miembro.id, datos)
+    pj = datos[str(miembro.id)]["slots"][datos[str(miembro.id)]["slot_activo"]]
+
+    if stat_target == "libre":
+        pj["puntos_stats"] += cantidad
+        campo = "Puntos Libres"
+    else:
+        pj[stat_target] += cantidad
+        campo = stat_target.capitalize()
+
+    guardar_datos(datos)
+
+    embed = discord.Embed(
+        title="📊 Estadísticas Otorgadas",
+        color=discord.Color.from_rgb(0, 204, 102)
+    )
+    embed.add_field(name="👤 Jugador:", value=miembro.mention, inline=True)
+    embed.add_field(name="📈 Estadística:", value=f"**{campo}**", inline=True)
+    embed.add_field(name="✨ Cantidad:", value=f"`+{cantidad}`", inline=True)
+    embed.set_footer(text=f"Otorgado por {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
 @bot.command(name="encantar")
 async def encantar(ctx, stat_a_encantar: str = None):
     if not stat_a_encantar or stat_a_encantar.lower().strip() not in ["fuerza", "vida", "agilidad", "suerte"]: 
