@@ -148,6 +148,36 @@ TIENDA_ITEMS_BASE = {
     "espada_antigua": {"nombre": "Espada de Acero Antiguo", "precio": 3500, "desc": "Arma equipable lista para encantar con estadísticas.", "es_arma": True}
 }
 
+# =========================================================================
+# 🧬 STATS BASE POR RAZA
+# Estos son los stats que se suman al obtener una raza y se restan al cambiarla.
+# =========================================================================
+STATS_POR_RAZA = {
+    "Humano":                {"fuerza": 5, "vida": 5, "agilidad": 5, "suerte": 5},
+    "Medio-Elfo":            {"fuerza": 4, "vida": 5, "agilidad": 6, "suerte": 5},
+    "Enano":                 {"fuerza": 9, "vida": 6, "agilidad": 2, "suerte": 3},
+    "Elfo":                  {"fuerza": 3, "vida": 4, "agilidad": 7, "suerte": 6},
+    "Demonio":               {"fuerza": 8, "vida": 7, "agilidad": 4, "suerte": 1},
+    "Espíritu":              {"fuerza": 1, "vida": 2, "agilidad": 9, "suerte": 8},
+    "Humano del Inframundo": {"fuerza": 9, "vida": 8, "agilidad": 6, "suerte": 5},
+    "Híbrido Oscuro":        {"fuerza": 5, "vida": 6, "agilidad": 8, "suerte": 3},
+}
+
+def aplicar_stats_raza(pj: dict, raza_nueva: str, raza_anterior: str = None):
+    """
+    Quita los stats de la raza anterior y aplica los de la nueva.
+    No toca los puntos que el jugador haya invertido manualmente.
+    """
+    if raza_anterior and raza_anterior in STATS_POR_RAZA:
+        stats_viejos = STATS_POR_RAZA[raza_anterior]
+        for stat, valor in stats_viejos.items():
+            pj[stat] = max(0, pj.get(stat, 0) - valor)
+
+    if raza_nueva in STATS_POR_RAZA:
+        stats_nuevos = STATS_POR_RAZA[raza_nueva]
+        for stat, valor in stats_nuevos.items():
+            pj[stat] = pj.get(stat, 0) + valor
+
 LISTA_RANGOS = [
     "Mago normal", "Mago", "Caballero Mágico junior", "Caballero Mágico Intermedio",
     "Caballero Mágico Superior", "Caballero Mágico maximo", "Rey mago"
@@ -344,12 +374,26 @@ async def ejecutar_spin_logica(ctx, tipo: str, es_reroll: bool):
     
     pj[type_clean] = elegido
     user["spins_realizados"][type_clean] = True
+
+    # Aplicar stats base si el spin es de raza
+    if type_clean == "raza":
+        raza_anterior = pj.get("raza_anterior", None)
+        aplicar_stats_raza(pj, elegido, raza_anterior)
+        pj["raza_anterior"] = elegido
+
     guardar_datos(datos)
 
     await asignar_rol_automatico(ctx, type_clean, elegido)
 
     embed = discord.Embed(title=f"✨ ¡Giro de {type_clean.upper()}! ✨", color=discord.Color.from_rgb(47, 49, 54), description=f"*{pool[elegido]['desc']}*")
     embed.add_field(name="🔮 Obtenido:", value=f"**{elegido}**").add_field(name="⭐ Rareza:", value=f"`{pool[elegido]['rareza']}`")
+    if type_clean == "raza" and elegido in STATS_POR_RAZA:
+        s = STATS_POR_RAZA[elegido]
+        embed.add_field(
+            name="📊 Stats de Raza:",
+            value=f"💪 Fuerza `+{s['fuerza']}` | ❤️ Vida `+{s['vida']}` | ⚡ Agilidad `+{s['agilidad']}` | 🍀 Suerte `+{s['suerte']}`",
+            inline=False
+        )
     embed.set_image(url=pool[elegido]["gif"])
     await ctx.send(content=ctx.author.mention, embed=embed)
 
@@ -834,7 +878,13 @@ async def dar_mitico(ctx, miembro: discord.Member = None):
                     datos = cargar_datos()
                     verificar_usuario(miembro.id, datos)
                     slot = datos[str(miembro.id)]["slot_activo"]
-                    datos[str(miembro.id)]["slots"][slot][tipo_elegido] = objeto
+                    pj_target = datos[str(miembro.id)]["slots"][slot]
+                    pj_target[tipo_elegido] = objeto
+                    # Aplicar stats base si es raza
+                    if tipo_elegido == "raza":
+                        raza_anterior = pj_target.get("raza_anterior", None)
+                        aplicar_stats_raza(pj_target, objeto, raza_anterior)
+                        pj_target["raza_anterior"] = objeto
                     # Si es demonio, también marcar spin como hecho
                     if tipo_elegido == "demonio":
                         datos[str(miembro.id)]["spins_realizados"]["demonio"] = True
