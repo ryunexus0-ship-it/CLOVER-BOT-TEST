@@ -1,4 +1,5 @@
-﻿import discord
+﻿# -*- coding: utf-8 -*-
+import discord
 from discord.ext import commands
 import random
 import json
@@ -6,6 +7,9 @@ import os
 import asyncio
 import psycopg2
 from psycopg2.extras import Json
+from dotenv import load_dotenv
+
+load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True

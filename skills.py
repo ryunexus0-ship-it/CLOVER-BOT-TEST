@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # =========================================================================
 # 🌿 SKILL TREES POR MAGIA — Black Clover Bot
 # Cada magia tiene un árbol de habilidades desbloqueables con Skill Points.
