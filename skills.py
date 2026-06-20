@@ -1002,25 +1002,9 @@ SKILL_TREES = {
 import discord
 from discord.ext import commands
 
-def setup_skills(bot):
+def setup_skills(bot, cargar_datos, guardar_datos, verificar_usuario, es_admin_bot):
 
     # ── Helpers ──────────────────────────────────────────────────────────
-    def _cargar(): 
-        from bot import cargar_datos
-        return cargar_datos()
-
-    def _guardar(d):
-        from bot import guardar_datos
-        guardar_datos(d)
-
-    def _verificar(uid, datos):
-        from bot import verificar_usuario
-        verificar_usuario(uid, datos)
-
-    def _es_admin(ctx):
-        from bot import es_admin_bot
-        return es_admin_bot(ctx)
-
     def _get_pj(datos, uid):
         u = datos[str(uid)]
         return u["slots"][u["slot_activo"]]
@@ -1029,17 +1013,17 @@ def setup_skills(bot):
     @bot.command(name="darsp")
     async def darsp(ctx, miembro: discord.Member = None, cantidad: int = None):
         """Admin: otorga Skill Points a un jugador. +darsp [@usuario] [cantidad]"""
-        if not _es_admin(ctx):
+        if not es_admin_bot(ctx):
             return await ctx.send("❌ Solo los administradores pueden otorgar Skill Points.")
         if not miembro or cantidad is None or cantidad <= 0:
             return await ctx.send("❌ Uso: `+darsp [@usuario] [cantidad]`")
 
-        datos = _cargar()
-        _verificar(miembro.id, datos)
+        datos = cargar_datos()
+        verificar_usuario(miembro.id, datos)
         pj = _get_pj(datos, miembro.id)
         pj.setdefault("skill_points", 0)
         pj["skill_points"] += cantidad
-        _guardar(datos)
+        guardar_datos(datos)
 
         embed = discord.Embed(title="✨ Skill Points Otorgados", color=discord.Color.from_rgb(138, 43, 226))
         embed.add_field(name="👤 Jugador:", value=miembro.mention, inline=True)
@@ -1053,8 +1037,8 @@ def setup_skills(bot):
     async def skills(ctx, miembro: discord.Member = None):
         """Muestra el árbol de skills de tu magia actual. +skills [@usuario]"""
         miembro = miembro or ctx.author
-        datos = _cargar()
-        _verificar(miembro.id, datos)
+        datos = cargar_datos()
+        verificar_usuario(miembro.id, datos)
         pj = _get_pj(datos, miembro.id)
         pj.setdefault("skill_points", 0)
         pj.setdefault("habilidades", [])
@@ -1102,8 +1086,8 @@ def setup_skills(bot):
         if not nombre_habilidad:
             return await ctx.send("❌ Uso: `+aprender [nombre de la habilidad]`")
 
-        datos = _cargar()
-        _verificar(ctx.author.id, datos)
+        datos = cargar_datos()
+        verificar_usuario(ctx.author.id, datos)
         pj = _get_pj(datos, ctx.author.id)
         pj.setdefault("skill_points", 0)
         pj.setdefault("habilidades", [])
@@ -1139,7 +1123,7 @@ def setup_skills(bot):
 
         pj["skill_points"] -= h["costo"]
         pj["habilidades"].append(hid_encontrado)
-        _guardar(datos)
+        guardar_datos(datos)
 
         embed = discord.Embed(
             title="🎉 ¡Habilidad Desbloqueada!",
@@ -1156,8 +1140,8 @@ def setup_skills(bot):
     async def mishabilidades(ctx, miembro: discord.Member = None):
         """Muestra las habilidades desbloqueadas de un jugador. +mishabilidades"""
         miembro = miembro or ctx.author
-        datos = _cargar()
-        _verificar(miembro.id, datos)
+        datos = cargar_datos()
+        verificar_usuario(miembro.id, datos)
         pj = _get_pj(datos, miembro.id)
         pj.setdefault("habilidades", [])
         pj.setdefault("skill_points", 0)
