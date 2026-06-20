@@ -1279,15 +1279,55 @@ async def comandos(ctx):
 
 def _embed_raza_panel(datos: dict) -> discord.Embed:
     razas_custom = datos.get("razas_custom", {})
-    embed = discord.Embed(title="🧬 Panel de Gestión de Razas", color=discord.Color.from_rgb(138, 43, 226))
-    embed.add_field(name="📚 Razas Base:", value=str(len(RAZAS)), inline=True)
-    embed.add_field(name="✨ Razas Custom:", value=str(len(razas_custom)), inline=True)
+    embed = discord.Embed(
+        title="🧬 Panel de Gestión de Razas",
+        color=discord.Color.from_rgb(138, 43, 226)
+    )
+
+    # ── Razas Base ──────────────────────────────────────────
+    RAREZA_ORDEN = ["🟢", "🔵", "🟡", "🔴", "⚫"]
+    def rareza_key(item):
+        r = item[1].get("rareza", "")
+        for i, emoji in enumerate(RAREZA_ORDEN):
+            if r.startswith(emoji):
+                return i
+        return 99
+
+    base_lines = []
+    for nombre, data in sorted(RAZAS.items(), key=rareza_key):
+        prob = f"{data['peso']*100:.1f}%"
+        base_lines.append(f"{data['rareza']} **{nombre}** — `{prob}`")
+
+    embed.add_field(
+        name=f"📚 Razas Base ({len(RAZAS)})",
+        value="\n".join(base_lines),
+        inline=False
+    )
+
+    # ── Razas Custom ────────────────────────────────────────
     if razas_custom:
-        lista = "\n".join([f"• **{n}** — {v['rareza']} | 🎲 `{v['peso']*100:.1f}%`" for n, v in razas_custom.items()])
-        embed.add_field(name="📋 Listado:", value=lista, inline=False)
+        custom_lines = []
+        for nombre, data in razas_custom.items():
+            prob = f"{data.get('peso', 0)*100:.1f}%"
+            s = data.get("stats", {})
+            stats_txt = f"💪`{s.get('fuerza',0)}` ❤️`{s.get('vida',0)}` ⚡`{s.get('agilidad',0)}` 🍀`{s.get('suerte',0)}`"
+            custom_lines.append(
+                f"{data.get('rareza','—')} **{nombre}** — `{prob}`\n"
+                f"└ {stats_txt}"
+            )
+        embed.add_field(
+            name=f"✨ Razas Personalizadas ({len(razas_custom)})",
+            value="\n".join(custom_lines),
+            inline=False
+        )
     else:
-        embed.add_field(name="📋 Listado:", value="*Ninguna creada aún.*", inline=False)
-    embed.set_footer(text="Selecciona una acción con los botones")
+        embed.add_field(
+            name="✨ Razas Personalizadas (0)",
+            value="*Ninguna creada aún. Usa ➕ para agregar una.*",
+            inline=False
+        )
+
+    embed.set_footer(text="➕ Crear  •  ✏️ Editar  •  🗑️ Borrar  •  🔍 Ver Info")
     return embed
 
 
