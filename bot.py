@@ -549,6 +549,7 @@ class ComandosDropdown(discord.ui.Select):
             discord.SelectOption(label="Poderes de Owner (Pág 4)", description="Administración suprema, Exclusivos y Wipeos", emoji="👑"),
             discord.SelectOption(label="Logs y Creación (Pág 5)", description="Control de auditorías y comandos dinámicos", emoji="⚙️"),
             discord.SelectOption(label="Sistema de Skills (Pág 6)", description="Árbol de habilidades por magia", emoji="🌿"),
+            discord.SelectOption(label="Sistema de Razas (Pág 7)", description="Gestión de razas personalizadas", emoji="🧬"),
         ]
         super().__init__(placeholder="Selecciona una categoría de comandos...", min_values=1, max_values=1, options=options)
 
@@ -560,6 +561,7 @@ class ComandosDropdown(discord.ui.Select):
         elif self.values[0] == "Poderes de Owner (Pág 4)": self.view.pagina = 4
         elif self.values[0] == "Logs y Creación (Pág 5)": self.view.pagina = 5
         elif self.values[0] == "Sistema de Skills (Pág 6)": self.view.pagina = 6
+        elif self.values[0] == "Sistema de Razas (Pág 7)": self.view.pagina = 7
         await interaction.response.edit_message(embed=self.view.generar_embed_pagina(), view=self.view)
 
 class ComandosView(discord.ui.View):
@@ -571,7 +573,7 @@ class ComandosView(discord.ui.View):
 
     def generar_embed_pagina(self):
         embed = discord.Embed(color=discord.Color.from_rgb(43, 45, 49))
-        embed.set_footer(text=f"Página {self.pagina}/6 • {self.ctx.author.display_name}")
+        embed.set_footer(text=f"Página {self.pagina}/7 • {self.ctx.author.display_name}")
         if self.pagina == 1:
             embed.title = "🎮 Sistema de Rolplay (Jugadores)"
             embed.description = (
@@ -649,18 +651,36 @@ class ComandosView(discord.ui.View):
                 "└ Las habilidades tienen prereqs — desbloquea desde la base.\n"
                 "└ Los SP solo los dan los admins, no se ganan automáticamente."
             )
+        elif self.pagina == 7:
+            embed.title = "🧬 Sistema de Razas"
+            embed.description = (
+                "**+razas** *(Solo Staff)*\n└ Panel interactivo completo para gestionar razas.\n"
+                "  Desde ahí puedes crear, editar, borrar y ver info de cualquier raza.\n\n"
+                "**+inforaza [nombre]**\n└ Muestra la ficha completa de una raza.\n"
+                "  Funciona con razas base y razas personalizadas.\n\n"
+                "📌 **Panel +razas incluye:**\n"
+                "└ ➕ **Crear Raza** — formulario con nombre, rareza, peso, descripción, poder, desventaja, stats y GIF\n"
+                "└ ✏️ **Editar Raza** — modifica cualquier raza personalizada\n"
+                "└ 🗑️ **Borrar Raza** — elimina con confirmación\n"
+                "└ 🔍 **Ver Info** — ficha de cualquier raza (base o custom)\n"
+                "└ 🔄 **Actualizar** — refresca el listado\n\n"
+                "📌 **Formato de stats:** `fuerza/vida/agilidad/suerte`\n"
+                "└ Ej: `7/5/4/4` (valores del 0 al 20)\n\n"
+                "📌 **Formato de rareza:** `🔴 Mítico|0.02`\n"
+                "└ El número tras `|` es la probabilidad en el spin (0.02 = 2%)"
+            )
         return embed
 
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.blurple, row=1)
     async def boton_atras(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ Bloqueado.", ephemeral=True)
-        self.pagina = 6 if self.pagina == 1 else self.pagina - 1
+        self.pagina = 7 if self.pagina == 1 else self.pagina - 1
         await interaction.response.edit_message(embed=self.generar_embed_pagina(), view=self)
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.blurple, row=1)
     async def boton_siguiente(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ Bloqueado.", ephemeral=True)
-        self.pagina = 1 if self.pagina == 6 else self.pagina + 1
+        self.pagina = 1 if self.pagina == 7 else self.pagina + 1
         await interaction.response.edit_message(embed=self.generar_embed_pagina(), view=self)
 
 PERSONAJES_EXCLUSIVOS = {
@@ -1448,10 +1468,10 @@ class SeleccionarRazaView(discord.ui.View):
 
 class CrearRazaModal(discord.ui.Modal, title="🧬 Crear Nueva Raza"):
     nombre     = discord.ui.TextInput(label="Nombre de la Raza", placeholder="Ej: Dragón Ancestral", max_length=50)
-    rareza     = discord.ui.TextInput(label="Rareza y Peso (rareza|0.05)", placeholder="Ej: 🔴 Mítico|0.02", max_length=50)
+    rareza     = discord.ui.TextInput(label="Rareza|Peso  (Ej: 🔴 Mítico|0.02)", placeholder="🔴 Mítico|0.02", max_length=50)
     descripcion= discord.ui.TextInput(label="Descripción", style=discord.TextStyle.paragraph, placeholder="Origen y características...", max_length=300)
-    poder_desv = discord.ui.TextInput(label="Poder | Desventaja (separados por |)", style=discord.TextStyle.paragraph, placeholder="Poder especial | Desventaja de la raza", max_length=400)
-    stats_gif  = discord.ui.TextInput(label="Stats y GIF  (fuerza/vida/agilidad/suerte | url)", placeholder="Ej: 7/5/4/4 | https://i.imgur.com/xyz.gif", max_length=200)
+    poder_desv = discord.ui.TextInput(label="Poder | Desventaja", style=discord.TextStyle.paragraph, placeholder="Poder especial | Desventaja de la raza", max_length=400)
+    stats_gif  = discord.ui.TextInput(label="Stats|GIF  (7/5/4/4 | url o none)", placeholder="7/5/4/4 | https://i.imgur.com/xyz.gif", max_length=200)
 
     def __init__(self, ctx):
         super().__init__()
@@ -1510,10 +1530,10 @@ class CrearRazaModal(discord.ui.Modal, title="🧬 Crear Nueva Raza"):
 
 
 class EditarRazaModal(discord.ui.Modal, title="✏️ Editar Raza"):
-    rareza     = discord.ui.TextInput(label="Rareza y Peso (rareza|0.05)", max_length=50)
+    rareza     = discord.ui.TextInput(label="Rareza|Peso  (Ej: 🔴 Mítico|0.02)", max_length=50)
     descripcion= discord.ui.TextInput(label="Descripción", style=discord.TextStyle.paragraph, max_length=300)
     poder_desv = discord.ui.TextInput(label="Poder | Desventaja", style=discord.TextStyle.paragraph, max_length=400)
-    stats_gif  = discord.ui.TextInput(label="Stats y GIF (fuerza/vida/agilidad/suerte | url)", max_length=200)
+    stats_gif  = discord.ui.TextInput(label="Stats|GIF  (7/5/4/4 | url o none)", max_length=200)
 
     def __init__(self, ctx, nombre_raza: str, raza: dict):
         super().__init__(title=f"✏️ Editar: {nombre_raza[:35]}")
