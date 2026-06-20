@@ -873,9 +873,10 @@ async def viento_divino(ctx, *, mensaje: str):
     await ctx.send(content="@everyone", embed=embed)
 
 @bot.command(name="darmitico", aliases=["dar_mitico", "darpoder"])
-@es_owner_o_coowner()
 async def dar_mitico(ctx, miembro: discord.Member = None):
     """Menú interactivo para asignar raza/magia/grimorio/demonio a un usuario."""
+    if not es_admin_bot(ctx):
+        return await ctx.send("❌ Solo los administradores pueden usar este comando.")
     if not miembro:
         return await ctx.send("❌ Uso: `+darmitico [@usuario]`")
 
