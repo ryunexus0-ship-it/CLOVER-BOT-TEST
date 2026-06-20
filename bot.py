@@ -725,15 +725,95 @@ async def viento_divino(ctx, *, mensaje: str):
 
 @bot.command(name="dar_mítico")
 @es_owner_o_coowner()
-async def dar_mitico(ctx, miembro: discord.Member, tipo: str, *, objeto_nombre: str):
-    if tipo.lower().strip() not in ["raza", "magia", "grimorio", "demonio"]: return
-    datos = cargar_datos()
-    verificar_usuario(miembro.id, datos)
-    slot = datos[str(miembro.id)]["slot_activo"]
-    datos[str(miembro.id)]["slots"][slot][tipo.lower().strip()] = objeto_nombre
-    guardar_datos(datos)
-    await asignar_rol_automatico(ctx, tipo, objeto_nombre)
-    await ctx.send(f"👑 Infundido {objeto_nombre} a {miembro.mention}.")
+async def dar_mitico(ctx, miembro: discord.Member = None):
+    """Menú interactivo para asignar raza/magia/grimorio/demonio a un usuario."""
+    if not miembro:
+        return await ctx.send("❌ Uso: `+dar_mítico [@usuario]`")
+
+    class TipoSelect(discord.ui.Select):
+        def __init__(self):
+            super().__init__(
+                placeholder="1️⃣ Elige el tipo...",
+                options=[
+                    discord.SelectOption(label="Raza", emoji="🧬"),
+                    discord.SelectOption(label="Magia", emoji="🪄"),
+                    discord.SelectOption(label="Grimorio", emoji="🍀"),
+                    discord.SelectOption(label="Demonio", emoji="😈"),
+                ]
+            )
+
+        async def callback(self, interaction: discord.Interaction):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ No puedes usar esto.", ephemeral=True)
+            tipo_elegido = self.values[0].lower()
+            if tipo_elegido == "raza":      pool = RAZAS
+            elif tipo_elegido == "magia":   pool = MAGIAS
+            elif tipo_elegido == "grimorio": pool = GRIMORIOS
+            else:                            pool = DEMONIOS
+
+            # Divide el pool en chunks de 25 (límite de Discord)
+            items = list(pool.keys())
+            chunks = [items[i:i+25] for i in range(0, len(items), 25)]
+
+            class ObjetoSelect(discord.ui.Select):
+                def __init__(self, opciones):
+                    opts = [discord.SelectOption(
+                        label=nombre[:100],
+                        description=pool[nombre]["rareza"]
+                    ) for nombre in opciones]
+                    super().__init__(placeholder=f"2️⃣ Elige {tipo_elegido}...", options=opts)
+
+                async def callback(self2, interaction2: discord.Interaction):
+                    if interaction2.user.id != ctx.author.id:
+                        return await interaction2.response.send_message("❌ No puedes usar esto.", ephemeral=True)
+                    objeto = self2.values[0]
+                    datos = cargar_datos()
+                    verificar_usuario(miembro.id, datos)
+                    slot = datos[str(miembro.id)]["slot_activo"]
+                    datos[str(miembro.id)]["slots"][slot][tipo_elegido] = objeto
+                    # Si es demonio, también marcar spin como hecho
+                    if tipo_elegido == "demonio":
+                        datos[str(miembro.id)]["spins_realizados"]["demonio"] = True
+                    else:
+                        datos[str(miembro.id)]["spins_realizados"][tipo_elegido] = True
+                    guardar_datos(datos)
+                    await asignar_rol_automatico(ctx, tipo_elegido, objeto)
+                    embed = discord.Embed(
+                        title="👑 ¡Poder Infundido!",
+                        color=discord.Color.from_rgb(255, 215, 0)
+                    )
+                    embed.add_field(name="👤 Usuario:", value=miembro.mention, inline=True)
+                    embed.add_field(name="📌 Tipo:", value=tipo_elegido.capitalize(), inline=True)
+                    embed.add_field(name="✨ Otorgado:", value=f"**{objeto}**", inline=True)
+                    embed.add_field(name="⭐ Rareza:", value=pool[objeto]["rareza"], inline=True)
+                    embed.set_footer(text=f"Otorgado por {ctx.author.display_name}")
+                    await interaction2.response.edit_message(embed=embed, view=None)
+
+            # Si hay más de 25 items, agrega un selector de página
+            view2 = discord.ui.View(timeout=60)
+            if len(chunks) > 1:
+                for idx, chunk in enumerate(chunks):
+                    s = ObjetoSelect(chunk)
+                    s.placeholder = f"2️⃣ {tipo_elegido.capitalize()} (parte {idx+1}/{len(chunks)})..."
+                    view2.add_item(s)
+            else:
+                view2.add_item(ObjetoSelect(chunks[0]))
+
+            embed2 = discord.Embed(
+                title=f"👑 Otorgar {tipo_elegido.capitalize()}",
+                description=f"Elige el/la **{tipo_elegido}** para {miembro.mention}",
+                color=discord.Color.from_rgb(255, 215, 0)
+            )
+            await interaction.response.edit_message(embed=embed2, view=view2)
+
+    view = discord.ui.View(timeout=60)
+    view.add_item(TipoSelect())
+    embed = discord.Embed(
+        title="👑 Otorgar Poder Mítico",
+        description=f"Selecciona qué tipo de poder quieres dar a {miembro.mention}",
+        color=discord.Color.from_rgb(255, 215, 0)
+    )
+    await ctx.send(embed=embed, view=view)
 
 @bot.command(name="impuesto_real")
 @es_owner_o_coowner()
