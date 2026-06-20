@@ -446,7 +446,7 @@ class PerfilView(discord.ui.View):
 
         if self.pagina == 1:
             embed = discord.Embed(title=f"📖 Ficha de Rol - {self.miembro.display_name}", color=discord.Color.from_rgb(47, 49, 54))
-            embed.description = f"🎴 **Slot Activo:** {slot}\n👤 **Nombre de Rol:** {pj['nombre_rp']}\n👑 **Exclusivo:** {pj.get('personaje_exclusivo', 'Ninguno')}\n\n🧬 **Raza:**\n{pj['raza']}\n\n🪄 **Magia:**\n{pj['magia']}\n\n🍀 **Grimorio:**\n{pj['grimorio']}\n\n😈 **Demonio Alojado:**\n`{pj.get('demonio', 'Ninguno')}`\n\n🎟️ **Spins (RR):** ⭐ {user['rerolls']}"
+            embed.description = f"🎴 **Slot Activo:** {slot}\n👤 **Nombre de Rol:** {pj['nombre_rp']}\n👑 **Exclusivo:** {pj.get('personaje_exclusivo', 'Ninguno')}\n\n🧬 **Raza:**\n{pj['raza']}\n\n🪄 **Magia:**\n{pj['magia']}\n\n🍀 **Grimorio:**\n{pj['grimorio']}\n\n😈 **Demonio Alojado:**\n`{pj.get('demonio', 'Ninguno')}`\n\n🎟️ **Spins (RR):** ⭐ {user['rerolls']}\n💎 **Skill Points:** `{pj.get('skill_points', 0)} SP`"
             return embed
         elif self.pagina == 2:
             embed = discord.Embed(title=f"💰 Billetera e Inventario", color=discord.Color.gold())
@@ -482,7 +482,8 @@ class ComandosDropdown(discord.ui.Select):
             discord.SelectOption(label="Economía y Armas (Pág 2)", description="Tienda, Compras, Balance y Encantos", emoji="🪙"),
             discord.SelectOption(label="Staff Administrativo (Pág 3)", description="Misiones, Dinero, Rangos y Órdenes", emoji="🛡️"),
             discord.SelectOption(label="Poderes de Owner (Pág 4)", description="Administración suprema, Exclusivos y Wipeos", emoji="👑"),
-            discord.SelectOption(label="Logs y Creación (Pág 5)", description="Control de auditorías y comandos dinámicos", emoji="⚙️")
+            discord.SelectOption(label="Logs y Creación (Pág 5)", description="Control de auditorías y comandos dinámicos", emoji="⚙️"),
+            discord.SelectOption(label="Sistema de Skills (Pág 6)", description="Árbol de habilidades por magia", emoji="🌿"),
         ]
         super().__init__(placeholder="Selecciona una categoría de comandos...", min_values=1, max_values=1, options=options)
 
@@ -493,6 +494,7 @@ class ComandosDropdown(discord.ui.Select):
         elif self.values[0] == "Staff Administrativo (Pág 3)": self.view.pagina = 3
         elif self.values[0] == "Poderes de Owner (Pág 4)": self.view.pagina = 4
         elif self.values[0] == "Logs y Creación (Pág 5)": self.view.pagina = 5
+        elif self.values[0] == "Sistema de Skills (Pág 6)": self.view.pagina = 6
         await interaction.response.edit_message(embed=self.view.generar_embed_pagina(), view=self.view)
 
 class ComandosView(discord.ui.View):
@@ -504,34 +506,96 @@ class ComandosView(discord.ui.View):
 
     def generar_embed_pagina(self):
         embed = discord.Embed(color=discord.Color.from_rgb(43, 45, 49))
-        embed.set_footer(text=f"Página {self.pagina}/5 • {self.ctx.author.display_name}")
+        embed.set_footer(text=f"Página {self.pagina}/6 • {self.ctx.author.display_name}")
         if self.pagina == 1:
             embed.title = "🎮 Sistema de Rolplay (Jugadores)"
-            embed.description = "**+crearpj [Nombre]**\n└ Registra tu personaje.\n\n**+cambiarnombre [Nombre]**\n└ Cambia el nombre de tu PJ.\n\n**+perfil [@usuario]**\n└ Panel interactivo completo.\n\n**+pj [@usuario]**\n└ Resumen rápido de datos.\n\n**+slot [1/2/3]**\n└ Cambia de Slot de rol.\n\n**+reclamar**\n└ Recompensa diaria.\n\n**+entrenamiento**\n└ Entrena para ganar puntos de stats.\n\n**+acender**\n└ Asciende al próximo rango por 1000 Pts.\n\n**+stats [@usuario]**\n└ Muestra tus atributos.\n\n**+addstat [stat] [cantidad]**\n└ Invierte puntos de estadísticas.\n\n**+spin [tipo]** y **+rr [tipo]**\n└ Giros y rerolls de fichas."
+            embed.description = (
+                "**+crearpj [Nombre]**\n└ Registra tu personaje.\n\n"
+                "**+cambiarnombre [Nombre]**\n└ Cambia el nombre de tu PJ.\n\n"
+                "**+perfil [@usuario]**\n└ Panel interactivo completo. Muestra raza, magia, grimorio, demonio, SP y más.\n\n"
+                "**+pj [@usuario]**\n└ Resumen rápido de datos.\n\n"
+                "**+slot [1/2/3]**\n└ Cambia de Slot de rol.\n\n"
+                "**+reclamar**\n└ Recompensa diaria.\n\n"
+                "**+entrenamiento**\n└ Entrena para ganar puntos de stats libres.\n\n"
+                "**+acender**\n└ Asciende al próximo rango por 1000 Pts.\n\n"
+                "**+stats [@usuario]**\n└ Muestra tus atributos de combate.\n\n"
+                "**+addstat [fuerza/vida/agilidad/suerte] [cantidad]**\n└ Asigna tus puntos de stats libres.\n\n"
+                "**+spin [raza/magia/grimorio/demonio]**\n└ Gira tu ficha de personaje.\n\n"
+                "**+rr [raza/magia/grimorio/demonio]**\n└ Reroll gastando 1 turno de reroll."
+            )
         elif self.pagina == 2:
             embed.title = "🪙 Economía, Tienda y Equipamiento"
-            embed.description = "**+tienda**\n└ Catálogo completo.\n\n**+comprar [id]**\n└ Compra objetos.\n\n**+balance**\n└ Tu dinero actual.\n\n**+encantar [stat]**\n└ Añade +2 stats a tus armas por 2000 ¥.\n\n**+ranking**\n└ Top 10 magos más poderosos.\n\n**+listordenes**\n└ Clasificación de escuadrones."
+            embed.description = (
+                "**+tienda**\n└ Catálogo completo de objetos.\n\n"
+                "**+comprar [id]**\n└ Compra un ítem de la tienda.\n\n"
+                "**+balance [@usuario]**\n└ Consulta el dinero actual.\n\n"
+                "**+encantar [fuerza/vida/agilidad/suerte]**\n└ Añade +2 al stat elegido en tu arma equipada por 2000 ¥.\n\n"
+                "**+ranking**\n└ Top 10 magos más poderosos del servidor.\n\n"
+                "**+listordenes**\n└ Clasificación de escuadrones por estrellas."
+            )
         elif self.pagina == 3:
             embed.title = "🛡️ Staff Administrativo y Narración"
-            embed.description = "**+darmision [@usuario] [puntos] [desc]**\n└ Premia misiones.\n\n**+crear_mision [recompensa] [desc]**\n└ Añade misiones fijos.\n\n**+add_item / +remove_item**\n└ Control de tienda.\n\n**+add / +remover_yenes**\n└ Modifica dinero.\n\n**+dar_rr**\n└ Regala rerolls.\n\n**+crear_orden / +addstar / +deletestar**\n└ Control de escuadrones.\n\n**+narrar [1-5] [Enemigo]**\n└ Genera acciones de rol."
+            embed.description = (
+                "**+darmision [@usuario] [puntos] [desc]**\n└ Premia misiones completadas.\n\n"
+                "**+crear_mision [recompensa] [desc]**\n└ Publica una misión en el tablero.\n\n"
+                "**+add [@usuario] [cantidad]**\n└ Da yenes a un jugador.\n\n"
+                "**+remover_yenes [@usuario] [cantidad]**\n└ Quita yenes a un jugador.\n\n"
+                "**+dar_rr [@usuario] [cantidad]**\n└ Regala rerolls.\n\n"
+                "**+darstat [@usuario] [stat/libre] [cantidad]**\n└ Otorga puntos de estadística directamente.\n\n"
+                "**+darsp [@usuario] [cantidad]**\n└ Otorga Skill Points para desbloquear habilidades.\n\n"
+                "**+add_item / +remove_item**\n└ Gestiona ítems de la tienda.\n\n"
+                "**+crear_orden / +addstar / +deletestar**\n└ Control de escuadrones.\n\n"
+                "**+narrar [1-5] [Enemigo]**\n└ Genera acciones de combate narradas."
+            )
         elif self.pagina == 4:
             embed.title = "👑 Privado Owner, Co-Owner & Creador"
-            embed.description = "**+dar_exclusivo / +quitar_exclusivo / +lista_exclusivos**\n└ Gestión de personajes canon.\n\n**+crear_jerarquia**\n└ Inyecta todos los roles decorados automáticamente.\n\n**+daradmin / +quitaradmin** | **+daryuno / +quitaryuno**\n└ Gestión de permisos supremos del bot.\n\n**+viento_divino [msg]**\n└ Comunicado global con @everyone.\n\n**+dar_mítico**\n└ Entrega directa de razas/magias sin spins.\n\n**+impuesto_real** | **+banco_infinito** | **+wipe** | **+shutdown**\n└ Comandos absolutos de control técnico."
+            embed.description = (
+                "**+dar_exclusivo / +quitar_exclusivo / +lista_exclusivos**\n└ Gestión de personajes canon.\n\n"
+                "**+crear_jerarquia**\n└ Inyecta todos los roles decorados automáticamente.\n\n"
+                "**+daradmin / +quitaradmin**\n└ Asigna o revoca permisos de admin bot.\n\n"
+                "**+daryuno / +quitaryuno**\n└ Asigna o revoca rango Co-Owner.\n\n"
+                "**+viento_divino [msg]**\n└ Comunicado global con @everyone.\n\n"
+                "**+dar_mítico [@usuario]**\n└ Menú interactivo para dar raza/magia/grimorio/demonio sin spins.\n\n"
+                "**+impuesto_real [cantidad]**\n└ Cobra yenes a todos los jugadores.\n\n"
+                "**+banco_infinito**\n└ Recursos ilimitados para el owner.\n\n"
+                "**+wipe [@usuario]**\n└ Borra todos los datos de un jugador.\n\n"
+                "**+shutdown**\n└ Apaga el bot."
+            )
         elif self.pagina == 5:
             embed.title = "⚙️ Módulos de Auditoría y Personalización"
-            embed.description = "**+setlog [#canal]**\n└ Establece el canal de registros.\n\n**+crear_comando / +eliminar_comando / +lista_comandos**\n└ Gestión de comandos dinámicos."
+            embed.description = (
+                "**+setlog [#canal]**\n└ Establece el canal de registros de auditoría.\n\n"
+                "**+crear_comando [nombre] [respuesta]**\n└ Crea un comando personalizado de respuesta.\n\n"
+                "**+eliminar_comando [nombre]**\n└ Elimina un comando personalizado.\n\n"
+                "**+lista_comandos**\n└ Lista todos los comandos personalizados creados."
+            )
+        elif self.pagina == 6:
+            embed.title = "🌿 Sistema de Habilidades (Skills)"
+            embed.description = (
+                "**+skills [@usuario]**\n└ Muestra el árbol de habilidades completo de tu magia.\n"
+                "  Indica qué está desbloqueado ✅, qué puedes comprar 🔓 y qué está bloqueado 🔒.\n\n"
+                "**+aprender [nombre de habilidad]**\n└ Desbloquea una habilidad gastando Skill Points.\n"
+                "  Usa el nombre exacto que aparece en `+skills`.\n\n"
+                "**+mishabilidades [@usuario]**\n└ Lista rápida de las habilidades ya desbloqueadas.\n\n"
+                "**+darsp [@usuario] [cantidad]** *(Solo Staff)*\n└ Otorga Skill Points a un jugador.\n"
+                "  Los SP son independientes de los puntos de stats.\n\n"
+                "📌 **¿Cómo funciona?**\n"
+                "└ Cada magia tiene un árbol exclusivo de 5 habilidades.\n"
+                "└ Las habilidades tienen prereqs — desbloquea desde la base.\n"
+                "└ Los SP solo los dan los admins, no se ganan automáticamente."
+            )
         return embed
 
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.blurple, row=1)
     async def boton_atras(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ Bloqueado.", ephemeral=True)
-        self.pagina = 5 if self.pagina == 1 else self.pagina - 1
+        self.pagina = 6 if self.pagina == 1 else self.pagina - 1
         await interaction.response.edit_message(embed=self.generar_embed_pagina(), view=self)
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.blurple, row=1)
     async def boton_siguiente(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.ctx.author.id: return await interaction.response.send_message("❌ Bloqueado.", ephemeral=True)
-        self.pagina = 1 if self.pagina == 5 else self.pagina + 1
+        self.pagina = 1 if self.pagina == 6 else self.pagina + 1
         await interaction.response.edit_message(embed=self.generar_embed_pagina(), view=self)
 
 PERSONAJES_EXCLUSIVOS = {
