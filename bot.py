@@ -167,14 +167,19 @@ def aplicar_stats_raza(pj: dict, raza_nueva: str, raza_anterior: str = None):
     """
     Quita los stats de la raza anterior y aplica los de la nueva.
     No toca los puntos que el jugador haya invertido manualmente.
+    Consulta tanto razas base como razas personalizadas guardadas en la DB.
     """
-    if raza_anterior and raza_anterior in STATS_POR_RAZA:
-        stats_viejos = STATS_POR_RAZA[raza_anterior]
+    datos = cargar_datos()
+    razas_custom = datos.get("razas_custom", {})
+    pool_stats = {**STATS_POR_RAZA, **{k: v["stats"] for k, v in razas_custom.items()}}
+
+    if raza_anterior and raza_anterior in pool_stats:
+        stats_viejos = pool_stats[raza_anterior]
         for stat, valor in stats_viejos.items():
             pj[stat] = max(0, pj.get(stat, 0) - valor)
 
-    if raza_nueva in STATS_POR_RAZA:
-        stats_nuevos = STATS_POR_RAZA[raza_nueva]
+    if raza_nueva in pool_stats:
+        stats_nuevos = pool_stats[raza_nueva]
         for stat, valor in stats_nuevos.items():
             pj[stat] = pj.get(stat, 0) + valor
 
@@ -191,7 +196,8 @@ def calcular_rango(puntos: int) -> str:
 def _defaults():
     return {
         "ordenes": {}, "admins": [], "co_owners": [], "canal_logs": None,
-        "comandos_creados": {}, "tienda_personalizada": {}, "tablero_misiones": []
+        "comandos_creados": {}, "tienda_personalizada": {}, "tablero_misiones": [],
+        "razas_custom": {}
     }
 
 def cargar_datos():
@@ -209,6 +215,7 @@ def cargar_datos():
                     datos.setdefault("comandos_creados", {})
                     datos.setdefault("tienda_personalizada", {})
                     datos.setdefault("tablero_misiones", [])
+                    datos.setdefault("razas_custom", {})
                     return datos
     except Exception as e:
         print(f"❌ Error al cargar datos: {e}")
@@ -222,6 +229,7 @@ def guardar_datos(datos):
     datos.setdefault("comandos_creados", {})
     datos.setdefault("tienda_personalizada", {})
     datos.setdefault("tablero_misiones", [])
+    datos.setdefault("razas_custom", {})
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -352,6 +360,11 @@ async def ejecutar_spin_logica(ctx, tipo: str, es_reroll: bool):
     elif type_clean == "grimorio": pool = GRIMORIOS
     else: pool = DEMONIOS
 
+    # Si es raza, mezclar con razas personalizadas
+    if type_clean == "raza":
+        razas_custom = datos.get("razas_custom", {})
+        pool = {**RAZAS, **{k: {**v, "peso": v["peso"]} for k, v in razas_custom.items()}}
+
     nombres = list(pool.keys())
     pesos = [pool[n]["peso"] for n in nombres]
     elegido = "Ninguno"
@@ -387,13 +400,17 @@ async def ejecutar_spin_logica(ctx, tipo: str, es_reroll: bool):
 
     embed = discord.Embed(title=f"✨ ¡Giro de {type_clean.upper()}! ✨", color=discord.Color.from_rgb(47, 49, 54), description=f"*{pool[elegido]['desc']}*")
     embed.add_field(name="🔮 Obtenido:", value=f"**{elegido}**").add_field(name="⭐ Rareza:", value=f"`{pool[elegido]['rareza']}`")
-    if type_clean == "raza" and elegido in STATS_POR_RAZA:
-        s = STATS_POR_RAZA[elegido]
-        embed.add_field(
-            name="📊 Stats de Raza:",
-            value=f"💪 Fuerza `+{s['fuerza']}` | ❤️ Vida `+{s['vida']}` | ⚡ Agilidad `+{s['agilidad']}` | 🍀 Suerte `+{s['suerte']}`",
-            inline=False
-        )
+    if type_clean == "raza":
+        datos_check = cargar_datos()
+        razas_custom = datos_check.get("razas_custom", {})
+        pool_stats_spin = {**STATS_POR_RAZA, **{k: v["stats"] for k, v in razas_custom.items()}}
+        if elegido in pool_stats_spin:
+            s = pool_stats_spin[elegido]
+            embed.add_field(
+                name="📊 Stats de Raza:",
+                value=f"💪 Fuerza `+{s['fuerza']}` | ❤️ Vida `+{s['vida']}` | ⚡ Agilidad `+{s['agilidad']}` | 🍀 Suerte `+{s['suerte']}`",
+                inline=False
+            )
     embed.set_image(url=pool[elegido]["gif"])
     await ctx.send(content=ctx.author.mention, embed=embed)
 
@@ -854,7 +871,9 @@ async def dar_mitico(ctx, miembro: discord.Member = None):
             if interaction.user.id != ctx.author.id:
                 return await interaction.response.send_message("❌ No puedes usar esto.", ephemeral=True)
             tipo_elegido = self.values[0].lower()
-            if tipo_elegido == "raza":      pool = RAZAS
+            _datos_tmp = cargar_datos()
+            if tipo_elegido == "raza":
+                pool = {**RAZAS, **_datos_tmp.get("razas_custom", {})}
             elif tipo_elegido == "magia":   pool = MAGIAS
             elif tipo_elegido == "grimorio": pool = GRIMORIOS
             else:                            pool = DEMONIOS
@@ -1247,6 +1266,315 @@ async def balance(ctx, miembro: discord.Member = None):
 async def comandos(ctx):
     view = ComandosView(ctx)
     await ctx.send(embed=view.generar_embed_pagina(), view=view)
+
+# =========================================================================
+# 🧬 SISTEMA DE RAZAS PERSONALIZADAS
+# =========================================================================
+
+class CrearRazaModal(discord.ui.Modal, title="🧬 Crear Nueva Raza"):
+    nombre = discord.ui.TextInput(
+        label="Nombre de la Raza",
+        placeholder="Ej: Dragón Ancestral",
+        max_length=50
+    )
+    rareza = discord.ui.TextInput(
+        label="Rareza",
+        placeholder="Ej: 🔴 Mítico | 🟢 Común | 🟡 Legendario",
+        max_length=40
+    )
+    descripcion = discord.ui.TextInput(
+        label="Descripción",
+        placeholder="Describe la raza, su origen y características...",
+        style=discord.TextStyle.paragraph,
+        max_length=300
+    )
+    poder = discord.ui.TextInput(
+        label="Poder / Habilidad Especial",
+        placeholder="Describe el poder único de esta raza...",
+        style=discord.TextStyle.paragraph,
+        max_length=200
+    )
+    stats_raw = discord.ui.TextInput(
+        label="Stats (fuerza/vida/agilidad/suerte)",
+        placeholder="Ej: 7/5/4/4  (en ese orden exacto, separado por /)",
+        max_length=20
+    )
+
+    def __init__(self, ctx, peso: float, desventaja: str, gif_url: str):
+        super().__init__()
+        self.ctx = ctx
+        self.peso = peso
+        self.desventaja = desventaja
+        self.gif_url = gif_url
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parsear stats
+        try:
+            partes = [int(x.strip()) for x in self.stats_raw.value.split("/")]
+            if len(partes) != 4:
+                raise ValueError
+            fuerza, vida, agilidad, suerte = partes
+            if any(v < 0 or v > 20 for v in partes):
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message(
+                "❌ Stats inválidos. Usa el formato `fuerza/vida/agilidad/suerte` con números del 0 al 20. Ej: `7/5/4/4`",
+                ephemeral=True
+            )
+
+        nombre_raza = self.nombre.value.strip()
+        datos = cargar_datos()
+        datos.setdefault("razas_custom", {})
+
+        # Verificar duplicado
+        if nombre_raza in RAZAS or nombre_raza in datos["razas_custom"]:
+            return await interaction.response.send_message(
+                f"❌ Ya existe una raza llamada **{nombre_raza}**.",
+                ephemeral=True
+            )
+
+        datos["razas_custom"][nombre_raza] = {
+            "rareza": self.rareza.value.strip(),
+            "peso": self.peso,
+            "desc": self.descripcion.value.strip(),
+            "poder": self.poder.value.strip(),
+            "desventaja": self.desventaja.strip(),
+            "gif": self.gif_url.strip() if self.gif_url.strip().startswith("http") else "https://i.imgur.com/vH_w9Wz.gif",
+            "stats": {"fuerza": fuerza, "vida": vida, "agilidad": agilidad, "suerte": suerte}
+        }
+        guardar_datos(datos)
+
+        embed = discord.Embed(
+            title=f"🧬 ¡Raza Creada: {nombre_raza}!",
+            color=discord.Color.from_rgb(138, 43, 226)
+        )
+        embed.add_field(name="⭐ Rareza:", value=self.rareza.value.strip(), inline=True)
+        embed.add_field(name="🎲 Peso (probabilidad):", value=f"`{self.peso}`", inline=True)
+        embed.add_field(name="📖 Descripción:", value=self.descripcion.value.strip(), inline=False)
+        embed.add_field(name="✨ Poder:", value=self.poder.value.strip(), inline=False)
+        embed.add_field(name="⚠️ Desventaja:", value=self.desventaja.strip(), inline=False)
+        embed.add_field(
+            name="📊 Stats Base:",
+            value=f"💪 Fuerza `{fuerza}` | ❤️ Vida `{vida}` | ⚡ Agilidad `{agilidad}` | 🍀 Suerte `{suerte}`",
+            inline=False
+        )
+        embed.set_footer(text=f"Creada por {self.ctx.author.display_name}")
+        await interaction.response.send_message(embed=embed)
+
+
+@bot.command(name="crearraza")
+async def crearraza(ctx, peso: float = None, gif_url: str = None, *, desventaja: str = None):
+    """Crea una raza personalizada. +crearraza [peso] [gif_url] [desventaja]
+    Peso: probabilidad del spin (Ej: 0.05 = 5%). La suma de todos los pesos debe ser aprox 1.
+    """
+    if not es_admin_bot(ctx):
+        return await ctx.send("❌ Solo los administradores pueden crear razas.")
+    if peso is None:
+        return await ctx.send(
+            "❌ Uso: `+crearraza [peso] [gif_url] [desventaja]`\n"
+            "**Peso:** probabilidad en el spin. Ej: `0.05` = 5%\n"
+            "**gif_url:** URL de imagen/gif para el embed (o escribe `none`)\n"
+            "**desventaja:** texto describiendo la desventaja de la raza\n\n"
+            "Ejemplo: `+crearraza 0.03 https://i.imgur.com/xyz.gif Son vulnerables al fuego sagrado`"
+        )
+    if gif_url is None or desventaja is None:
+        return await ctx.send("❌ Debes indicar también el gif y la desventaja. Usa `+crearraza` sin argumentos para ver la ayuda.")
+
+    modal = CrearRazaModal(ctx, peso, desventaja, gif_url)
+    await ctx.interaction.response.send_modal(modal) if ctx.interaction else None
+
+    # Como es prefix command, enviamos el modal de otra forma
+    class AbrirModal(discord.ui.View):
+        @discord.ui.button(label="📝 Abrir formulario de raza", style=discord.ButtonStyle.green)
+        async def abrir(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el admin puede usar esto.", ephemeral=True)
+            await interaction.response.send_modal(CrearRazaModal(ctx, peso, desventaja, gif_url))
+            self.stop()
+
+    await ctx.send(
+        f"✅ Parámetros recibidos. Haz clic para completar el formulario:",
+        view=AbrirModal()
+    )
+
+
+@bot.command(name="editarraza")
+async def editarraza(ctx, *, nombre_raza: str = None):
+    """Edita una raza personalizada existente. +editarraza [nombre exacto]"""
+    if not es_admin_bot(ctx):
+        return await ctx.send("❌ Solo los administradores pueden editar razas.")
+    if not nombre_raza:
+        return await ctx.send("❌ Uso: `+editarraza [nombre de la raza]`")
+
+    datos = cargar_datos()
+    razas_custom = datos.get("razas_custom", {})
+
+    if nombre_raza not in razas_custom:
+        return await ctx.send(f"❌ No existe ninguna raza personalizada llamada **{nombre_raza}**.\nUsa `+listrazas` para ver las disponibles.")
+
+    raza = razas_custom[nombre_raza]
+
+    class EditarRazaModal(discord.ui.Modal, title=f"✏️ Editar: {nombre_raza[:40]}"):
+        rareza = discord.ui.TextInput(label="Rareza", default=raza["rareza"], max_length=40)
+        descripcion = discord.ui.TextInput(label="Descripción", default=raza["desc"], style=discord.TextStyle.paragraph, max_length=300)
+        poder = discord.ui.TextInput(label="Poder / Habilidad Especial", default=raza["poder"], style=discord.TextStyle.paragraph, max_length=200)
+        desventaja = discord.ui.TextInput(label="Desventaja", default=raza["desventaja"], max_length=200)
+        stats_raw = discord.ui.TextInput(
+            label="Stats (fuerza/vida/agilidad/suerte)",
+            default=f"{raza['stats']['fuerza']}/{raza['stats']['vida']}/{raza['stats']['agilidad']}/{raza['stats']['suerte']}",
+            max_length=20
+        )
+
+        async def on_submit(self2, interaction: discord.Interaction):
+            try:
+                partes = [int(x.strip()) for x in self2.stats_raw.value.split("/")]
+                if len(partes) != 4 or any(v < 0 or v > 20 for v in partes):
+                    raise ValueError
+                fuerza, vida, agilidad, suerte = partes
+            except ValueError:
+                return await interaction.response.send_message("❌ Stats inválidos. Formato: `7/5/4/4`", ephemeral=True)
+
+            datos2 = cargar_datos()
+            datos2["razas_custom"][nombre_raza].update({
+                "rareza": self2.rareza.value.strip(),
+                "desc": self2.descripcion.value.strip(),
+                "poder": self2.poder.value.strip(),
+                "desventaja": self2.desventaja.value.strip(),
+                "stats": {"fuerza": fuerza, "vida": vida, "agilidad": agilidad, "suerte": suerte}
+            })
+            guardar_datos(datos2)
+
+            embed = discord.Embed(title=f"✏️ Raza Actualizada: {nombre_raza}", color=discord.Color.orange())
+            embed.add_field(name="📊 Nuevos Stats:", value=f"💪 `{fuerza}` | ❤️ `{vida}` | ⚡ `{agilidad}` | 🍀 `{suerte}`", inline=False)
+            embed.add_field(name="⭐ Rareza:", value=self2.rareza.value.strip(), inline=True)
+            await interaction.response.send_message(embed=embed)
+
+    class AbrirEditar(discord.ui.View):
+        @discord.ui.button(label="✏️ Editar raza", style=discord.ButtonStyle.blurple)
+        async def abrir(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el admin puede usar esto.", ephemeral=True)
+            await interaction.response.send_modal(EditarRazaModal())
+            self.stop()
+
+    await ctx.send(f"✅ Editando **{nombre_raza}**. Haz clic para abrir el formulario:", view=AbrirEditar())
+
+
+@bot.command(name="borrarraza")
+async def borrarraza(ctx, *, nombre_raza: str = None):
+    """Elimina una raza personalizada. +borrarraza [nombre]"""
+    if not es_admin_bot(ctx):
+        return await ctx.send("❌ Solo los administradores pueden borrar razas.")
+    if not nombre_raza:
+        return await ctx.send("❌ Uso: `+borrarraza [nombre de la raza]`")
+
+    datos = cargar_datos()
+    razas_custom = datos.get("razas_custom", {})
+
+    if nombre_raza not in razas_custom:
+        return await ctx.send(f"❌ No existe ninguna raza personalizada llamada **{nombre_raza}**.")
+
+    class ConfirmarBorrar(discord.ui.View):
+        @discord.ui.button(label="✅ Confirmar borrado", style=discord.ButtonStyle.red)
+        async def confirmar(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el admin puede confirmar.", ephemeral=True)
+            datos2 = cargar_datos()
+            del datos2["razas_custom"][nombre_raza]
+            guardar_datos(datos2)
+            await interaction.response.edit_message(content=f"🗑️ Raza **{nombre_raza}** eliminada.", view=None)
+            self.stop()
+
+        @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.grey)
+        async def cancelar(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el admin puede cancelar.", ephemeral=True)
+            await interaction.response.edit_message(content="Operación cancelada.", view=None)
+            self.stop()
+
+    await ctx.send(f"⚠️ ¿Seguro que quieres eliminar la raza **{nombre_raza}**? Esta acción no se puede deshacer.", view=ConfirmarBorrar())
+
+
+@bot.command(name="listrazas", aliases=["razas"])
+async def listrazas(ctx):
+    """Lista todas las razas: base y personalizadas."""
+    datos = cargar_datos()
+    razas_custom = datos.get("razas_custom", {})
+
+    embed = discord.Embed(title="🧬 Razas Disponibles", color=discord.Color.from_rgb(138, 43, 226))
+
+    # Razas base
+    base_txt = "\n".join([f"• **{n}** — {v['rareza']}" for n, v in RAZAS.items()])
+    embed.add_field(name="📚 Razas Base", value=base_txt, inline=False)
+
+    # Razas custom
+    if razas_custom:
+        custom_txt = "\n".join([f"• **{n}** — {v['rareza']}" for n, v in razas_custom.items()])
+        embed.add_field(name="✨ Razas Personalizadas", value=custom_txt, inline=False)
+    else:
+        embed.add_field(name="✨ Razas Personalizadas", value="*Ninguna creada aún.*", inline=False)
+
+    embed.set_footer(text="Usa +inforaza [nombre] para ver detalles de una raza")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="inforaza")
+async def inforaza(ctx, *, nombre_raza: str = None):
+    """Muestra la info completa de una raza. +inforaza [nombre]"""
+    if not nombre_raza:
+        return await ctx.send("❌ Uso: `+inforaza [nombre de la raza]`")
+
+    datos = cargar_datos()
+    razas_custom = datos.get("razas_custom", {})
+
+    raza = None
+    es_custom = False
+
+    if nombre_raza in razas_custom:
+        raza = razas_custom[nombre_raza]
+        es_custom = True
+    elif nombre_raza in RAZAS:
+        # Raza base — construir info con lo disponible
+        rb = RAZAS[nombre_raza]
+        stats = STATS_POR_RAZA.get(nombre_raza, {"fuerza": 0, "vida": 0, "agilidad": 0, "suerte": 0})
+        embed = discord.Embed(
+            title=f"🧬 {nombre_raza}",
+            description=rb["desc"],
+            color=discord.Color.from_rgb(47, 49, 54)
+        )
+        embed.add_field(name="⭐ Rareza:", value=rb["rareza"], inline=True)
+        embed.add_field(name="🎲 Probabilidad:", value=f"`{rb['peso']*100:.2f}%`", inline=True)
+        embed.add_field(
+            name="📊 Stats Base:",
+            value=f"💪 Fuerza `{stats['fuerza']}` | ❤️ Vida `{stats['vida']}` | ⚡ Agilidad `{stats['agilidad']}` | 🍀 Suerte `{stats['suerte']}`",
+            inline=False
+        )
+        embed.set_image(url=rb["gif"])
+        return await ctx.send(embed=embed)
+    else:
+        return await ctx.send(f"❌ No encontré la raza **{nombre_raza}**. Usa `+listrazas` para ver todas.")
+
+    if es_custom:
+        stats = raza["stats"]
+        embed = discord.Embed(
+            title=f"🧬 {nombre_raza}",
+            description=raza["desc"],
+            color=discord.Color.from_rgb(138, 43, 226)
+        )
+        embed.add_field(name="⭐ Rareza:", value=raza["rareza"], inline=True)
+        embed.add_field(name="🎲 Probabilidad:", value=f"`{raza['peso']*100:.2f}%`", inline=True)
+        embed.add_field(name="✨ Poder:", value=raza["poder"], inline=False)
+        embed.add_field(name="⚠️ Desventaja:", value=raza["desventaja"], inline=False)
+        embed.add_field(
+            name="📊 Stats Base:",
+            value=f"💪 Fuerza `{stats['fuerza']}` | ❤️ Vida `{stats['vida']}` | ⚡ Agilidad `{stats['agilidad']}` | 🍀 Suerte `{stats['suerte']}`",
+            inline=False
+        )
+        if raza.get("gif", "").startswith("http"):
+            embed.set_image(url=raza["gif"])
+        embed.set_footer(text="✨ Raza Personalizada")
+        await ctx.send(embed=embed)
+
 
 @bot.command(name="setlog")
 async def setlog(ctx, canal: discord.TextChannel = None):
